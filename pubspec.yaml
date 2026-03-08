@@ -1,0 +1,31 @@
+name: mobile
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.6.0
+  shared_preferences: ^2.5.4
+  google_fonts: ^8.0.0
+  image_picker: ^1.2.1
+  google_mlkit_text_recognition: ^0.15.0
+  camera: ^0.11.3
+  image: ^4.0.17
+  path_provider: ^2.1.5
+  path: ^1.9.1
+  sqflite: ^2.4.2
+  intl: ^0.19.0  # <--- ADICIONADO AQUI PARA CORRIGIR O ERRO
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
