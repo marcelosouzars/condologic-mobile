@@ -17,11 +17,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> _todasUnidades = [];
   List<String> _blocos = [];
   
-  // Controle de Navegação (Drill-down)
-  bool _condominioSelecionado = false; // Nível 0
-  String? _blocoSelecionado;           // Nível 1
-  String? _andarSelecionado;           // Nível 2
-  String? _unidadeSelecionada;         // Nível 3 (O Apto específico)
+  bool _condominioSelecionado = false; 
+  String? _blocoSelecionado;           
+  String? _andarSelecionado;           
+  String? _unidadeSelecionada;         
 
   bool isLoading = true;
   String baseUrl = "https://condologic-backend.onrender.com";
@@ -54,7 +53,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           isLoading = false;
         });
         
-        // Se voltou de uma leitura, o sistema verifica se finalizou o apartamento inteiro
         if (checarProximo && _unidadeSelecionada != null) {
           _verificarConclusaoUnidade();
         }
@@ -79,9 +77,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // ==============================================================
-  // A MÁGICA DE PULAR PARA O PRÓXIMO APARTAMENTO
-  // ==============================================================
   void _verificarConclusaoUnidade() {
     final relogiosDoApto = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && 
@@ -89,14 +84,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       u['identificacao'].toString() == _unidadeSelecionada
     ).toList();
 
-    // Verifica se todos os relógios deste apto já têm leitura ou estão salvos offline (amarelo)
     bool todosLidos = relogiosDoApto.isNotEmpty && relogiosDoApto.every((r) => r['valor_lido'] != null || r['status_cor'] == 'amarelo');
 
     if (todosLidos) {
-      // Descobre qual é o próximo apartamento do andar
       final todasAsUnidadesDoAndar = _todasUnidades.where((u) => u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado).toList();
       final aptosUnicos = todasAsUnidadesDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
-      aptosUnicos.sort((a, b) => a.compareTo(b)); // Ordena ex: 901, 902, 903...
+      aptosUnicos.sort((a, b) => a.compareTo(b)); 
 
       int indexAtual = aptosUnicos.indexOf(_unidadeSelecionada!);
       
@@ -104,7 +97,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         String proximoApto = aptosUnicos[indexAtual + 1];
         _mostrarDialogoProximaUnidade(proximoApto);
       } else {
-        // Se era o último apartamento do andar, volta para a lista do andar
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Andar finalizado!"), backgroundColor: Colors.blue));
         setState(() => _unidadeSelecionada = null);
       }
@@ -130,7 +122,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              setState(() => _unidadeSelecionada = null); // Volta pra lista de apartamentos
+              setState(() => _unidadeSelecionada = null); 
             }, 
             child: const Text("VOLTAR", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))
           ),
@@ -138,7 +130,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900], padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
             onPressed: () {
               Navigator.pop(ctx);
-              setState(() => _unidadeSelecionada = proximoApto); // Pula pro próximo!
+              setState(() => _unidadeSelecionada = proximoApto); 
             },
             child: const Text("IR PARA O PRÓXIMO", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           )
@@ -147,28 +139,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ==============================================================
-  // CONTROLE DE VOLTAR (BREADCRUMB)
-  // ==============================================================
   void _voltarNivel() {
     setState(() {
       if (_unidadeSelecionada != null) {
-        _unidadeSelecionada = null; // Volta pros Apartamentos
+        _unidadeSelecionada = null; 
       } else if (_andarSelecionado != null) {
-        _andarSelecionado = null; // Volta pros Andares
+        _andarSelecionado = null; 
       } else if (_blocoSelecionado != null) {
-        _blocoSelecionado = null; // Volta pros Blocos
+        _blocoSelecionado = null; 
       } else if (_condominioSelecionado) {
-        _condominioSelecionado = false; // Volta pro Início
+        _condominioSelecionado = false; 
       }
     });
   }
 
   // ==============================================================
-  // CONSTRUTORES DE LISTA (CASCATA)
+  // FORMATADOR INTELIGENTE DE ANDARES
+  // ==============================================================
+  String _formatarAndar(String andarRaw) {
+    String limpo = andarRaw.trim();
+    if (limpo.toLowerCase() == 'térreo' || limpo.toLowerCase() == 'terreo') {
+      return 'Térreo';
+    }
+    // Se for um número (ex: "1", "2"), transforma em "1º Andar"
+    int? numero = int.tryParse(limpo);
+    if (numero != null) {
+      return "${numero}º Andar";
+    }
+    // Se o banco já mandar "Andar 3" ou "Cobertura", deixa como está
+    return limpo.toUpperCase();
+  }
+
+  // ==============================================================
+  // CONSTRUTORES DE LISTA
   // ==============================================================
 
   Widget _buildListaCondominios() {
+    String nomeCondominio = "CONDOMÍNIO VINCULADO";
+    
+    // Tenta puxar o nome vindo do banco (usuário ou lista de unidades)
+    if (widget.user['tenant_nome'] != null) {
+      nomeCondominio = widget.user['tenant_nome'].toString().toUpperCase();
+    } else if (_todasUnidades.isNotEmpty && _todasUnidades.first['condominio_nome'] != null) {
+      nomeCondominio = _todasUnidades.first['condominio_nome'].toString().toUpperCase();
+    }
+
     return ListView(
       padding: const EdgeInsets.all(10),
       children: [
@@ -177,7 +192,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: ListTile(
             contentPadding: const EdgeInsets.all(20),
             leading: Icon(Icons.location_city, color: Colors.blue[900], size: 45),
-            title: Text("Condomínio Vinculado", style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 20)),
+            title: Text(nomeCondominio, style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 20)),
             subtitle: const Text("Toque para acessar os blocos e torres", style: TextStyle(color: Colors.grey)),
             trailing: const Icon(Icons.chevron_right, color: Colors.grey, size: 30),
             onTap: () => setState(() => _condominioSelecionado = true),
@@ -215,11 +230,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final andar = andaresUnicos[i];
         final qtd = unidadesDoBloco.where((u) => (u['andar'] ?? 'Térreo') == andar).length;
 
+        // USA A NOSSA FUNÇÃO DE FORMATAÇÃO AQUI!
+        final andarExibicao = _formatarAndar(andar);
+
         return Card(
           color: Colors.white, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           child: ListTile(
             leading: Icon(Icons.layers, color: Colors.orange[800], size: 30),
-            title: Text(andar, style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 16)),
+            title: Text(andarExibicao, style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 16)),
             subtitle: Text("$qtd medidores neste piso", style: const TextStyle(color: Colors.grey)),
             trailing: const Icon(Icons.chevron_right, color: Colors.grey),
             onTap: () => setState(() => _andarSelecionado = andar),
@@ -229,7 +247,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // NOVO NÍVEL: MOSTRA APENAS OS APARTAMENTOS AGRUPADOS (Ex: 901, 902, 903)
   Widget _buildListaApartamentos() {
     final relogiosDoAndar = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado
@@ -243,7 +260,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       itemBuilder: (ctx, i) {
         final apto = aptosUnicos[i];
         
-        // Pega todos os relógios DESSA porta específica
         final relogiosDesteApto = relogiosDoAndar.where((r) => r['identificacao'].toString() == apto).toList();
         final qtdLidos = relogiosDesteApto.where((r) => r['valor_lido'] != null || r['status_cor'] == 'amarelo').length;
         final total = relogiosDesteApto.length;
@@ -270,7 +286,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // NÍVEL FINAL: OS RELÓGIOS DE DENTRO DO APARTAMENTO SELECIONADO (Fria, Quente, Gás)
   Widget _buildListaRelogiosDoApto() {
     final relogios = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && 
@@ -306,7 +321,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 'tipo_medidor': tipo,
                 'leitura_anterior': item['leitura_anterior'] ?? '0.0'
               };
-              // Ao retornar da câmera, força o recarregamento dos dados E checa se o apto foi concluído
               Navigator.push(
                 context, 
                 MaterialPageRoute(builder: (context) => LeituraScreen(unidade: item, medidor: medidorData))
@@ -318,12 +332,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ==============================================================
-  // MENU DO USUÁRIO
-  // ==============================================================
-  // (Omiti o modal de senha aqui apenas por brevidade, mas ele continua o mesmo!)
   void _abrirModalAlterarSenha() {
-    // ... Mesmo código do modal de senha de antes ...
+    // Mesma função de antes!
   }
 
   @override
@@ -331,8 +341,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String tituloApp = "CondoLogic";
     if (_condominioSelecionado) tituloApp = "Blocos / Torres";
     if (_blocoSelecionado != null) tituloApp = _blocoSelecionado!;
-    if (_andarSelecionado != null) tituloApp = "$_blocoSelecionado - $_andarSelecionado";
-    if (_unidadeSelecionada != null) tituloApp = "Apto $_unidadeSelecionada"; // Mostra em qual porta ele está
+    if (_andarSelecionado != null) tituloApp = "$_blocoSelecionado - ${_formatarAndar(_andarSelecionado!)}";
+    if (_unidadeSelecionada != null) tituloApp = "Apto $_unidadeSelecionada"; 
 
     bool mostrarBotaoVoltar = _condominioSelecionado || _blocoSelecionado != null;
 
