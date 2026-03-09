@@ -24,7 +24,7 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'condologic_prod_v3.db');
     return await openDatabase(
       path,
-      version: 1, 
+      version: 1,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE unidades (
@@ -74,7 +74,7 @@ class DatabaseHelper {
         'unidade_id': u['unidade_id'],
         'identificacao': u['identificacao'],
         'bloco_nome': u['bloco_nome'],
-        'andar': u['andar'] ?? 'Térreo', 
+        'andar': u['andar'] ?? 'Térreo',
         'status_cor': u['status_cor'],
         'leitura_anterior': leituraAnt,
         'media_consumo': mediaCons,
@@ -100,7 +100,7 @@ class DatabaseHelper {
       'data_leitura': DateTime.now().toIso8601String(),
       'enviado': 0
     });
-    
+
     await db.update(
       'unidades', 
       {'status_cor': 'amarelo', 'valor_lido': valor}, 
@@ -110,7 +110,6 @@ class DatabaseHelper {
     return id;
   }
 
-  // >>> MÉTODOS PARA A SINCRONIZAÇÃO <<<
   Future<List<Map<String, dynamic>>> getLeiturasOfflinePendentes() async {
     final db = await database;
     return await db.query('leituras_offline', where: 'enviado = 0');
@@ -129,10 +128,9 @@ class ApiService {
   final String baseUrl = "https://condologic-backend.onrender.com";
   final DatabaseHelper dbHelper = DatabaseHelper();
 
-  // Função para pegar unidades e salvar no cache
   Future<List<dynamic>> getUnidades(int tenantId) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/dashboard/unidades?tenant_id=$tenantId')).timeout(const Duration(seconds: 10));
+      final response = await http.get(Uri.parse('$baseUrl/api/dashboard/unidades?tenant_id=$tenantId')).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
         final List<dynamic> unidades = jsonDecode(response.body);
         await dbHelper.salvarUnidadesCache(unidades);
@@ -141,40 +139,34 @@ class ApiService {
         throw Exception("Erro no servidor");
       }
     } catch (e) {
-      print("Aviso: Carregando unidades do modo Offline.");
+      print("Aviso: Carregando unidades do modo Offline devido a falha de rede.");
       return await dbHelper.getUnidadesCache();
     }
   }
 
-  // >>> A MÁGICA DA SINCRONIZAÇÃO OCORRE AQUI <<<
   Future<int> sincronizarPendenciasOffline(int tenantId) async {
     final pendencias = await dbHelper.getLeiturasOfflinePendentes();
-    if (pendencias.isEmpty) return 0; // Nada para sincronizar
+    if (pendencias.isEmpty) return 0; 
 
     int enviosComSucesso = 0;
-
     for (var p in pendencias) {
       try {
         File foto = File(p['caminho_foto']);
-        // Se a foto foi deletada do celular acidentalmente, limpa do banco local
         if (!await foto.exists()) {
           await dbHelper.deletarLeituraOffline(p['id']);
           continue;
         }
 
-        // Prepara a foto
         final bytes = await foto.readAsBytes();
         String base64Image = base64Encode(bytes);
 
-        // Busca a leitura anterior lá do Cache para mandar pra IA
         final db = await dbHelper.database;
         final unidadeData = await db.query('unidades', where: 'medidor_id = ?', whereArgs: [p['medidor_id']]);
         double leituraAnterior = 0.0;
         if (unidadeData.isNotEmpty) {
-           leituraAnterior = (unidadeData.first['leitura_anterior'] as num?)?.toDouble() ?? 0.0;
+          leituraAnterior = (unidadeData.first['leitura_anterior'] as num?)?.toDouble() ?? 0.0;
         }
 
-        // Dispara o POST silencioso pro Render
         final response = await http.post(
           Uri.parse('$baseUrl/api/leitura/processar-ia'),
           headers: {'Content-Type': 'application/json'},
@@ -186,16 +178,14 @@ class ApiService {
           }),
         ).timeout(const Duration(seconds: 25));
 
-        // Se a IA leu e o banco salvou, limpamos a pendência do celular
         if (response.statusCode == 200) {
           await dbHelper.deletarLeituraOffline(p['id']);
           enviosComSucesso++;
         }
       } catch (e) {
-        print("Falha ao sincronizar registro ID ${p['id']}: $e");
+        print("Falha silenciada ao sincronizar registro ID ${p['id']}: $e");
       }
     }
-    
     return enviosComSucesso;
   }
 }
