@@ -13,9 +13,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passController = TextEditingController();
   bool _isLoading = false;
 
-  // =========================================================================
-  // SUA LÓGICA DE LOGIN ORIGINAL - MANTIDA PERFEITAMENTE
-  // =========================================================================
   Future<void> _fazerLogin() async {
     String cpf = _cpfController.text.trim();
     String senha = _passController.text.trim();
@@ -56,12 +53,10 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     }
   }
-  // =========================================================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // backgroundColor removido, pois o fundo agora é a imagem
       body: Stack(
         children: [
           // 1. CAMADA DE IMAGEM DE FUNDO
@@ -72,119 +67,123 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
           
-          // 2. CAMADA DE PELÍCULA ESCURA (Overlay) PARA DAR CONTRASTE
+          // 2. CAMADA DE PELÍCULA ESCURA
           Positioned.fill(
             child: ColorFiltered(
-              colorFilter: const ColorFilter.mode(Color(0xa0000000), BlendMode.srcOver), // Aumentada ligeiramente para melhor leitura
+              colorFilter: const ColorFilter.mode(Color(0xa0000000), BlendMode.srcOver), 
               child: const SizedBox(),
             ),
           ),
 
-          // 3. CAMADA DE CONTEÚDO (Visual atualizado conforme sua imagem modelo)
+          // 3. CAMADA DE CONTEÚDO 
           SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: [
-                  // A. ESPAÇO SUPERIOR (Pushando o logo para baixo um pouco)
                   const SizedBox(height: 50),
 
-                  // B. SEÇÃO LOGO - AGORA FORA DO CARD E NO TOPO
-                  // Mudando as cores para branco/azul claro para aparecer sobre o fundo
-                  Icon(Icons.apartment, size: 80, color: Colors.blue[100]), // Azul bem claro
-                  const SizedBox(height: 15),
+                  // LOGO FLUTUANTE NO TOPO
+                  Icon(Icons.apartment, size: 70, color: Colors.blue[100]), 
+                  const SizedBox(height: 10),
                   Text(
                     "CONDOLOGIC",
                     style: TextStyle(
-                      fontSize: 28, 
+                      fontSize: 24, 
                       fontWeight: FontWeight.bold, 
-                      color: Colors.blue[100], // Azul bem claro
+                      color: Colors.blue[100], 
                       letterSpacing: 2
                     ),
                   ),
                   const Text(
                     "SISTEMA DE FOTOMETRIA", 
                     style: TextStyle(
-                      color: Colors.white70, // Branco translúcido
-                      fontSize: 12, 
+                      color: Colors.white70, 
+                      fontSize: 11, 
                       fontWeight: FontWeight.bold
                     )
                   ),
 
-                  // =========================================================================
-                  // C. O GRANDE ESPAÇO QUE VOCÊ PEDIU
-                  // A imagem de fundo ficará visível aqui, entre o logo e o formulário.
-                  // =========================================================================
-                  const SizedBox(height: 180), // Ajuste este valor se quiser mais ou menos espaço
+                  // ESPAÇO VAZIO AUMENTADO PARA EMPURRAR O LOGIN BEM PARA BAIXO
+                  const SizedBox(height: 220), 
 
-                  // D. CARD CONTENDO APENAS O FORMULÁRIO (Fica mais embaixo)
+                  // CARD DE LOGIN (MAIS COMPACTO)
                   Card(
                     elevation: 8,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 40),
+                      // Reduzimos o preenchimento interno para a caixa ficar menor
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 25),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          // Título do Formulário mantido, mas com cor original
                           Text(
                             "Acesse sua Conta",
                             style: TextStyle(
-                              fontSize: 18, 
+                              fontSize: 16, // Fonte menor
                               fontWeight: FontWeight.bold, 
                               color: Colors.blue[900]
                             ),
                           ),
-                          const SizedBox(height: 30),
+                          const SizedBox(height: 20),
                           
-                          // SEUS CAMPOS DE FORMULÁRIO ORIGINAIS - MANTIDOS
+                          // CAMPO CPF MAIS FINO
                           TextField(
                             controller: _cpfController,
                             keyboardType: TextInputType.number,
+                            style: const TextStyle(fontSize: 14), // Letra menor ao digitar
                             decoration: InputDecoration(
                               labelText: "CPF (Apenas números)",
+                              labelStyle: const TextStyle(fontSize: 14),
                               filled: true,
                               fillColor: Colors.grey[100],
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-                              prefixIcon: Icon(Icons.person, color: Colors.blue[900]),
+                              isDense: true, // Achata o campo
+                              contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 15),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                              prefixIcon: Icon(Icons.person, color: Colors.blue[900], size: 20), // Ícone menor
                             ),
                           ),
-                          const SizedBox(height: 15),
+                          const SizedBox(height: 12),
                           
+                          // CAMPO SENHA MAIS FINO
                           TextField(
                             controller: _passController,
                             obscureText: true,
+                            style: const TextStyle(fontSize: 14),
                             decoration: InputDecoration(
                               labelText: "SENHA",
+                              labelStyle: const TextStyle(fontSize: 14),
                               filled: true,
                               fillColor: Colors.grey[100],
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-                              prefixIcon: Icon(Icons.lock, color: Colors.blue[900]),
+                              isDense: true, // Achata o campo
+                              contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 15),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                              prefixIcon: Icon(Icons.lock, color: Colors.blue[900], size: 20), // Ícone menor
                             ),
                           ),
-                          const SizedBox(height: 40),
+                          const SizedBox(height: 25),
                           
-                          // SEU BOTÃO ORIGINAL - MANTIDO
+                          // BOTÃO ENTRAR REDUZIDO
                           SizedBox(
                             width: double.infinity,
-                            height: 55,
+                            height: 45, // Altura reduzida
                             child: ElevatedButton(
                               onPressed: _isLoading ? null : _fazerLogin,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.blue[900],
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                                 elevation: 3,
                               ),
                               child: _isLoading 
                                 ? const Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
-                                      SizedBox(width: 15),
-                                      Text("CONECTANDO...", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+                                      SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                                      SizedBox(width: 10),
+                                      Text("CONECTANDO...", style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold))
                                     ],
                                   )
-                                : const Text("ENTRAR", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                                : const Text("ENTRAR", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)), // Letra menor
                             ),
                           ),
                         ],
@@ -192,8 +191,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   
-                  // E. ESPAÇO INFERIOR (Para garantir que a caixa não encoste no final da tela)
-                  const SizedBox(height: 50),
+                  const SizedBox(height: 30),
                 ],
               ),
             ),
