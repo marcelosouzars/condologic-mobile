@@ -55,81 +55,105 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.blue[50], // Fundo claro igual à Web
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(30),
-          child: Card(
-            elevation: 8,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 40),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.apartment, size: 80, color: Colors.blue[900]),
-                  const SizedBox(height: 15),
-                  Text(
-                    "CONDOLOGIC",
-                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.blue[900], letterSpacing: 2),
-                  ),
-                  const Text("SISTEMA DE FOTOMETRIA", style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 40),
-                  
-                  TextField(
-                    controller: _cpfController,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: "CPF (Apenas números)",
-                      filled: true,
-                      fillColor: Colors.grey[100],
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-                      prefixIcon: Icon(Icons.person, color: Colors.blue[900]),
-                    ),
-                  ),
-                  const SizedBox(height: 15),
-                  
-                  TextField(
-                    controller: _passController,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      labelText: "SENHA",
-                      filled: true,
-                      fillColor: Colors.grey[100],
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-                      prefixIcon: Icon(Icons.lock, color: Colors.blue[900]),
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-                  
-                  SizedBox(
-                    width: double.infinity,
-                    height: 55,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : _fazerLogin,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue[900],
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                        elevation: 3,
+      body: Stack(
+        children: [
+          // IMAGEM DE FUNDO
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/background_mobile.png',
+              fit: BoxFit.cover,
+            ),
+          ),
+          
+          // PELÍCULA ESCURA DE CONTRASTE
+          Positioned.fill(
+            child: ColorFiltered(
+              colorFilter: const ColorFilter.mode(Color(0x80000000), BlendMode.srcOver),
+              child: const SizedBox(),
+            ),
+          ),
+
+          // SEU CONTEÚDO ORIGINAL DE LOGIN
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(30),
+              child: Card(
+                elevation: 8,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 40),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Image.asset(
+                        'assets/images/logo_condologic.png', 
+                        height: 80, 
+                        errorBuilder: (c, e, s) => Icon(Icons.apartment, size: 80, color: Colors.blue[900])
                       ),
-                      child: _isLoading 
-                        ? const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
-                              SizedBox(width: 15),
-                              Text("CONECTANDO...", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
-                            ],
-                          )
-                        : const Text("ENTRAR", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                    ),
+                      const SizedBox(height: 15),
+                      Text(
+                        "CONDOLOGIC",
+                        style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.blue[900], letterSpacing: 2),
+                      ),
+                      const Text("SISTEMA DE FOTOMETRIA", style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 40),
+                      
+                      TextField(
+                        controller: _cpfController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: "CPF (Apenas números)",
+                          filled: true,
+                          fillColor: Colors.grey[100],
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+                          prefixIcon: Icon(Icons.person, color: Colors.blue[900]),
+                        ),
+                      ),
+                      const SizedBox(height: 15),
+                      
+                      TextField(
+                        controller: _passController,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: "SENHA",
+                          filled: true,
+                          fillColor: Colors.grey[100],
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+                          prefixIcon: Icon(Icons.lock, color: Colors.blue[900]),
+                        ),
+                      ),
+                      const SizedBox(height: 40),
+                      
+                      SizedBox(
+                        width: double.infinity,
+                        height: 55,
+                        child: ElevatedButton(
+                          onPressed: _isLoading ? null : _fazerLogin,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue[900],
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                            elevation: 3,
+                          ),
+                          child: _isLoading 
+                            ? const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                                  SizedBox(width: 15),
+                                  Text("CONECTANDO...", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+                                ],
+                              )
+                            : const Text("ENTRAR", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
