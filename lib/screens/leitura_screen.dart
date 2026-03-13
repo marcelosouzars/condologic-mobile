@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'camera_screen.dart';
-import '../services/api_service.dart'; // Mantido para o DatabaseHelper
+import '../services/api_service.dart';
 
 class LeituraScreen extends StatefulWidget {
   final Map unidade;
@@ -57,19 +57,16 @@ class _LeituraScreenState extends State<LeituraScreen> {
     setState(() => _isProcessing = true);
 
     try {
-      // 1. COMPRESSÃO PODEROSA (Evita o Payload Too Large no Servidor)
+      // COMPRESSÃO DA IMAGEM PARA EVITAR TRAVAMENTO NO SERVIDOR
       final bytes = await File(path).readAsBytes();
       img.Image? originalImage = img.decodeImage(bytes);
       
       if (originalImage == null) throw Exception("Falha ao decodificar imagem");
 
-      // Reduzimos a largura para 800px e a qualidade para 70%.
-      // Isso deixa a foto super leve para a rede, mas perfeita para a IA ler!
       img.Image resizedImage = img.copyResize(originalImage, width: 800);
       List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 70);
       String base64Image = base64Encode(compressedBytes);
 
-      // 2. CHECA A INTERNET PRIMEIRO
       bool online = await _temInternet();
 
       if (!online) {
@@ -84,7 +81,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
         return;
       }
 
-      // 3. ENVIO BLINDADO PARA O SERVIDOR
+      // ENVIO PARA O SERVIDOR
       try {
         final response = await http.post(
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
@@ -97,17 +94,54 @@ class _LeituraScreenState extends State<LeituraScreen> {
           }),
         ).timeout(const Duration(seconds: 30));
 
-        // BLINDAGEM MÁGICA: Se o servidor cuspir HTML (erro fatal), nós interceptamos!
         if (response.body.trim().startsWith('<')) {
-          throw Exception("O servidor bloqueou a conexão (Status ${response.statusCode}). A foto pode estar pesada ou o servidor reiniciando.");
+          throw Exception("O servidor bloqueou a conexão (HTML). A foto pode estar muito pesada.");
         }
 
         if (response.statusCode == 200 || response.statusCode == 201) {
-          final data = jsonDecode(response.body);
-          _mostrarSucesso("A IA identificou o valor: ${data['leitura']}");
+          // ==============================================================
+          // AMORTECEDOR DE JSON (A MÁGICA QUE RESOLVE O ERRO DA TELA)
+          // ==============================================================
+          dynamic decodedData;
+          try {
+            decodedData = jsonDecode(response.body);
+          } catch (e) {
+            decodedData = response.body; // Se falhar no parse, usa a string bruta
+          }
+
+          // Trata o cenário onde a API devolve uma String duplamente codificada
+          if (decodedData is String) {
+            try {
+              var temp = jsonDecode(decodedData);
+              decodedData = temp;
+            } catch (_) {}
+          }
+
+          // Extração Flexível do Valor
+          String leituraFinal = "Não identificado";
+          if (decodedData is Map) {
+             leituraFinal = decodedData['leitura']?.toString() ?? decodedData['valor']?.toString() ?? decodedData.toString();
+          } else {
+             leituraFinal = decodedData.toString();
+          }
+
+          _mostrarSucesso("A IA identificou o valor:\n$leituraFinal");
         } else {
-          final erro = jsonDecode(response.body);
-          throw Exception(erro['error'] ?? "Erro interno na API");
+          // Trata também mensagens de erro bagunçadas que vêm do backend
+          dynamic erroData;
+          try {
+            erroData = jsonDecode(response.body);
+          } catch (_) {
+            erroData = response.body;
+          }
+          
+          String msgErro = "Erro na API";
+          if (erroData is Map) {
+             msgErro = erroData['error']?.toString() ?? erroData['mensagem']?.toString() ?? erroData.toString();
+          } else {
+             msgErro = erroData.toString();
+          }
+          throw Exception(msgErro);
         }
 
       } catch (e) {
@@ -162,7 +196,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
         content: Text(
           "LEITURA PROCESSADA!\n\n$mensagem\n\nO consumo foi calculado e salvo com sucesso no servidor.",
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.black87),
+          style: const TextStyle(color: Colors.black87, fontSize: 16),
         ),
         actions: [
           ElevatedButton(
@@ -183,7 +217,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
       SnackBar(
         content: Text(msg, style: const TextStyle(color: Colors.white)), 
         backgroundColor: Colors.red, 
-        duration: const Duration(seconds: 6) // Tempo maior para ler a mensagem
+        duration: const Duration(seconds: 6) 
       ),
     );
   }
