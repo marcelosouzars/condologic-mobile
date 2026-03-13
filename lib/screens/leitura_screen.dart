@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'camera_screen.dart';
-import '../services/api_service.dart';
+import '../services/api_service.dart'; 
 
 class LeituraScreen extends StatefulWidget {
   final Map unidade;
@@ -22,7 +22,7 @@ class LeituraScreen extends StatefulWidget {
 class _LeituraScreenState extends State<LeituraScreen> {
   File? _imageFile;
   bool _isProcessing = false;
-  String _baseUrl = "https://condologic-backend.onrender.com";
+  final String _baseUrl = "https://condologic-backend.onrender.com";
 
   Future<void> _capturarFoto() async {
     final String? path = await Navigator.push(
@@ -38,7 +38,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
     }
   }
 
-  // --- FUNÇÃO PARA CHECAR A INTERNET REAL ---
   Future<bool> _temInternet() async {
     try {
       final result = await InternetAddress.lookup('google.com').timeout(const Duration(seconds: 5));
@@ -57,10 +56,9 @@ class _LeituraScreenState extends State<LeituraScreen> {
     setState(() => _isProcessing = true);
 
     try {
-      // COMPRESSÃO DA IMAGEM PARA EVITAR TRAVAMENTO NO SERVIDOR
+      // COMPRESSÃO 
       final bytes = await File(path).readAsBytes();
       img.Image? originalImage = img.decodeImage(bytes);
-      
       if (originalImage == null) throw Exception("Falha ao decodificar imagem");
 
       img.Image resizedImage = img.copyResize(originalImage, width: 800);
@@ -81,7 +79,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
         return;
       }
 
-      // ENVIO PARA O SERVIDOR
+      // ENVIO BLINDADO
       try {
         final response = await http.post(
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
@@ -94,54 +92,34 @@ class _LeituraScreenState extends State<LeituraScreen> {
           }),
         ).timeout(const Duration(seconds: 30));
 
-        if (response.body.trim().startsWith('<')) {
-          throw Exception("O servidor bloqueou a conexão (HTML). A foto pode estar muito pesada.");
+        // === A BLINDAGEM SUPREMA DE TIPAGEM ESTÁ AQUI ===
+        String corpoResposta = response.body.trim();
+        
+        if (corpoResposta.startsWith('<')) {
+          throw Exception("O servidor bloqueou a imagem (muito pesada). Tente tirar a foto um pouco mais de longe.");
         }
 
         if (response.statusCode == 200 || response.statusCode == 201) {
-          // ==============================================================
-          // AMORTECEDOR DE JSON (A MÁGICA QUE RESOLVE O ERRO DA TELA)
-          // ==============================================================
-          dynamic decodedData;
-          try {
-            decodedData = jsonDecode(response.body);
-          } catch (e) {
-            decodedData = response.body; // Se falhar no parse, usa a string bruta
-          }
-
-          // Trata o cenário onde a API devolve uma String duplamente codificada
-          if (decodedData is String) {
-            try {
-              var temp = jsonDecode(decodedData);
-              decodedData = temp;
-            } catch (_) {}
-          }
-
-          // Extração Flexível do Valor
-          String leituraFinal = "Não identificado";
-          if (decodedData is Map) {
-             leituraFinal = decodedData['leitura']?.toString() ?? decodedData['valor']?.toString() ?? decodedData.toString();
-          } else {
-             leituraFinal = decodedData.toString();
-          }
-
-          _mostrarSucesso("A IA identificou o valor:\n$leituraFinal");
-        } else {
-          // Trata também mensagens de erro bagunçadas que vêm do backend
-          dynamic erroData;
-          try {
-            erroData = jsonDecode(response.body);
-          } catch (_) {
-            erroData = response.body;
-          }
+          String leituraFinal = "Valor não identificado";
           
-          String msgErro = "Erro na API";
-          if (erroData is Map) {
-             msgErro = erroData['error']?.toString() ?? erroData['mensagem']?.toString() ?? erroData.toString();
-          } else {
-             msgErro = erroData.toString();
+          try {
+            // Tenta decodificar de forma solta (sem forçar ser um Map)
+            var dadosDecodificados = jsonDecode(corpoResposta);
+            
+            // Se for um Dicionário, pega o valor. Se for Texto, usa o texto direto!
+            if (dadosDecodificados is Map) {
+              leituraFinal = dadosDecodificados['leitura']?.toString() ?? dadosDecodificados['valor']?.toString() ?? corpoResposta;
+            } else {
+              leituraFinal = dadosDecodificados.toString();
+            }
+          } catch (e) {
+            // Se não for JSON de jeito nenhum, a resposta é a própria leitura!
+            leituraFinal = corpoResposta;
           }
-          throw Exception(msgErro);
+
+          _mostrarSucesso(leituraFinal);
+        } else {
+          throw Exception("Erro do Servidor: $corpoResposta");
         }
 
       } catch (e) {
@@ -194,7 +172,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
         backgroundColor: Colors.white,
         title: const Icon(Icons.check_circle, color: Colors.green, size: 60),
         content: Text(
-          "LEITURA PROCESSADA!\n\n$mensagem\n\nO consumo foi calculado e salvo com sucesso no servidor.",
+          "LEITURA PROCESSADA!\n\nA IA identificou o valor:\n$mensagem\n\nO consumo foi calculado e salvo com sucesso.",
           textAlign: TextAlign.center,
           style: const TextStyle(color: Colors.black87, fontSize: 16),
         ),
