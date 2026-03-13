@@ -1,3 +1,5 @@
+// ==========================================>>> leitura_screen.dart
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -5,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'camera_screen.dart';
-import '../services/api_service.dart';
+import '../services/api_service.dart'; // Mantido para o DatabaseHelper
 
 class LeituraScreen extends StatefulWidget {
   final Map unidade;
@@ -55,20 +57,22 @@ class _LeituraScreenState extends State<LeituraScreen> {
     setState(() => _isProcessing = true);
 
     try {
+      // 1. COMPRESSÃO PODEROSA (Evita o Payload Too Large no Servidor)
       final bytes = await File(path).readAsBytes();
-      
       img.Image? originalImage = img.decodeImage(bytes);
+      
       if (originalImage == null) throw Exception("Falha ao decodificar imagem");
 
+      // Reduzimos a largura para 800px e a qualidade para 70%.
+      // Isso deixa a foto super leve para a rede, mas perfeita para a IA ler!
       img.Image resizedImage = img.copyResize(originalImage, width: 800);
-      List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 80);
+      List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 70);
       String base64Image = base64Encode(compressedBytes);
 
-      // 1. CHECA A INTERNET PRIMEIRO
+      // 2. CHECA A INTERNET PRIMEIRO
       bool online = await _temInternet();
 
       if (!online) {
-        // MODO OFFLINE VERDADEIRO
         print("Sem conexão real. Salvando offline.");
         await DatabaseHelper().salvarLeituraOffline(
           widget.unidade['id'] ?? widget.unidade['unidade_id'] ?? 0, 
@@ -80,7 +84,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
         return;
       }
 
-      // 2. SE TEM INTERNET, TENTA ENVIAR (COM TIMEOUT DE 30 SEGUNDOS)
+      // 3. ENVIO BLINDADO PARA O SERVIDOR
       try {
         final response = await http.post(
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
@@ -93,20 +97,25 @@ class _LeituraScreenState extends State<LeituraScreen> {
           }),
         ).timeout(const Duration(seconds: 30));
 
-        if (response.statusCode == 200) {
+        // BLINDAGEM MÁGICA: Se o servidor cuspir HTML (erro fatal), nós interceptamos!
+        if (response.body.trim().startsWith('<')) {
+          throw Exception("O servidor bloqueou a conexão (Status ${response.statusCode}). A foto pode estar pesada ou o servidor reiniciando.");
+        }
+
+        if (response.statusCode == 200 || response.statusCode == 201) {
           final data = jsonDecode(response.body);
           _mostrarSucesso("A IA identificou o valor: ${data['leitura']}");
         } else {
-          // AQUI ESTAVA O FALSO OFFLINE! AGORA ELE MOSTRA O ERRO DO SERVIDOR!
-          throw Exception("Erro do Servidor (Código ${response.statusCode}): ${response.body}");
+          final erro = jsonDecode(response.body);
+          throw Exception(erro['error'] ?? "Erro interno na API");
         }
 
       } catch (e) {
-         _mostrarErro("Falha no servidor ou timeout: $e");
+         _mostrarErro("Falha de comunicação: ${e.toString().replaceAll('Exception: ', '')}");
       }
 
     } catch (e) {
-      _mostrarErro("Falha catastrófica ao processar foto: $e");
+      _mostrarErro("Falha ao processar foto: ${e.toString().replaceAll('Exception: ', '')}");
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -171,14 +180,18 @@ class _LeituraScreenState extends State<LeituraScreen> {
 
   void _mostrarErro(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg, style: const TextStyle(color: Colors.white)), backgroundColor: Colors.red, duration: const Duration(seconds: 5)),
+      SnackBar(
+        content: Text(msg, style: const TextStyle(color: Colors.white)), 
+        backgroundColor: Colors.red, 
+        duration: const Duration(seconds: 6) // Tempo maior para ler a mensagem
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.blue[50], // Combinando com o Redesign do App
+      backgroundColor: Colors.blue[50], 
       appBar: AppBar(
         title: Text("Unidade ${widget.unidade['identificacao']}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.blue[900],
