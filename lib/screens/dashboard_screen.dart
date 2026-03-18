@@ -7,7 +7,7 @@ import '../services/api_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   final Map user;
-  DashboardScreen({required this.user});
+  const DashboardScreen({super.key, required this.user});
   
   @override
   _DashboardScreenState createState() => _DashboardScreenState();
@@ -18,13 +18,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<String> _blocos = [];
   
   bool _condominioSelecionado = false; 
-  String? _blocoSelecionado;           
+  String? _blocoSelecionado;
   String? _andarSelecionado;           
   String? _unidadeSelecionada;         
 
   bool isLoading = true;
   String baseUrl = "https://condologic-backend.onrender.com";
-  Timer? _syncTimer; 
+  Timer? _syncTimer;
 
   @override
   void initState() {
@@ -41,6 +41,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _carregarDados({bool checarProximo = false}) async {
     setState(() => isLoading = true);
+
     try {
       final dados = await ApiService().getUnidades(widget.user['tenant_id']);
       final blocosUnicos = dados.map((u) => u['bloco_nome'].toString()).toSet().toList();
@@ -52,7 +53,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _blocos = blocosUnicos;
           isLoading = false;
         });
-        
+
         if (checarProximo && _unidadeSelecionada != null) {
           _verificarConclusaoUnidade();
         }
@@ -92,7 +93,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       aptosUnicos.sort((a, b) => a.compareTo(b)); 
 
       int indexAtual = aptosUnicos.indexOf(_unidadeSelecionada!);
-      
       if (indexAtual >= 0 && indexAtual < aptosUnicos.length - 1) {
         String proximoApto = aptosUnicos[indexAtual + 1];
         _mostrarDialogoProximaUnidade(proximoApto);
@@ -124,7 +124,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Navigator.pop(ctx);
               setState(() => _unidadeSelecionada = null); 
             }, 
-            child: const Text("VOLTAR", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))
+            child: const Text("VOLTAR PARA LISTA", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900], padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
@@ -153,31 +153,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  // ==============================================================
-  // FORMATADOR INTELIGENTE DE ANDARES
-  // ==============================================================
   String _formatarAndar(String andarRaw) {
     String limpo = andarRaw.trim();
+
     if (limpo.toLowerCase() == 'térreo' || limpo.toLowerCase() == 'terreo') {
       return 'Térreo';
     }
-    // Se for um número (ex: "1", "2"), transforma em "1º Andar"
     int? numero = int.tryParse(limpo);
     if (numero != null) {
       return "${numero}º Andar";
     }
-    // Se o banco já mandar "Andar 3" ou "Cobertura", deixa como está
     return limpo.toUpperCase();
   }
 
-  // ==============================================================
-  // CONSTRUTORES DE LISTA
-  // ==============================================================
-
   Widget _buildListaCondominios() {
     String nomeCondominio = "CONDOMÍNIO VINCULADO";
-    
-    // Tenta puxar o nome vindo do banco (usuário ou lista de unidades)
+
     if (widget.user['tenant_nome'] != null) {
       nomeCondominio = widget.user['tenant_nome'].toString().toUpperCase();
     } else if (_todasUnidades.isNotEmpty && _todasUnidades.first['condominio_nome'] != null) {
@@ -222,7 +213,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildListaAndares() {
     final unidadesDoBloco = _todasUnidades.where((u) => u['bloco_nome'] == _blocoSelecionado).toList();
     final andaresUnicos = unidadesDoBloco.map((u) => u['andar']?.toString() ?? 'Térreo').toSet().toList();
-    andaresUnicos.sort();
+    
+    // ==============================================================
+    // A MÁGICA DA ORDENAÇÃO MATEMÁTICA DOS ANDARES
+    // ==============================================================
+    andaresUnicos.sort((a, b) {
+      int extrairNumero(String andar) {
+        String limpo = andar.toLowerCase();
+        if (limpo.contains('térreo') || limpo.contains('terreo')) return 0; // Térreo sempre primeiro
+        final regex = RegExp(r'\d+');
+        final match = regex.firstMatch(andar);
+        return match != null ? int.parse(match.group(0)!) : 999; // Os sem número vão pro final
+      }
+      return extrairNumero(a).compareTo(extrairNumero(b));
+    });
 
     return ListView.builder(
       itemCount: andaresUnicos.length,
@@ -230,7 +234,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final andar = andaresUnicos[i];
         final qtd = unidadesDoBloco.where((u) => (u['andar'] ?? 'Térreo') == andar).length;
 
-        // USA A NOSSA FUNÇÃO DE FORMATAÇÃO AQUI!
         final andarExibicao = _formatarAndar(andar);
 
         return Card(
@@ -251,7 +254,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final relogiosDoAndar = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado
     ).toList();
-    
     final aptosUnicos = relogiosDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
     aptosUnicos.sort((a, b) => a.compareTo(b));
 
@@ -265,6 +267,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final total = relogiosDesteApto.length;
 
         Color corStatus = Colors.red;
+        
         if (qtdLidos == total) corStatus = Colors.green;
         else if (qtdLidos > 0) corStatus = Colors.amber;
 
@@ -292,7 +295,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       (u['andar'] ?? 'Térreo') == _andarSelecionado &&
       u['identificacao'].toString() == _unidadeSelecionada
     ).toList();
-    
+
     return ListView.builder(
       itemCount: relogios.length,
       itemBuilder: (ctx, i) {
@@ -303,6 +306,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (item['status_cor'] == 'amarelo') corBolinha = Colors.amber;
 
         String tipo = item['tipo_medidor']?.toString().toUpperCase() ?? 'MEDIDOR';
+        
         IconData icone = Icons.speed;
         if (tipo.contains('FRIO') || tipo.contains('FRIA')) icone = Icons.water_drop;
         if (tipo.contains('QUENTE')) icone = Icons.local_fire_department;
@@ -321,10 +325,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 'tipo_medidor': tipo,
                 'leitura_anterior': item['leitura_anterior'] ?? '0.0'
               };
+
+              item['tenant_id'] = widget.user['tenant_id'];
+
               Navigator.push(
                 context, 
                 MaterialPageRoute(builder: (context) => LeituraScreen(unidade: item, medidor: medidorData))
-              ).then((_) => _carregarDados(checarProximo: true)); 
+              ).then((_) => _carregarDados(checarProximo: true));
             },
           ),
         );
@@ -332,17 +339,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _abrirModalAlterarSenha() {
-    // Mesma função de antes!
-  }
-
   @override
   Widget build(BuildContext context) {
     String tituloApp = "CondoLogic";
+
     if (_condominioSelecionado) tituloApp = "Blocos / Torres";
     if (_blocoSelecionado != null) tituloApp = _blocoSelecionado!;
     if (_andarSelecionado != null) tituloApp = "$_blocoSelecionado - ${_formatarAndar(_andarSelecionado!)}";
-    if (_unidadeSelecionada != null) tituloApp = "Apto $_unidadeSelecionada"; 
+    if (_unidadeSelecionada != null) tituloApp = "Apto $_unidadeSelecionada";
 
     bool mostrarBotaoVoltar = _condominioSelecionado || _blocoSelecionado != null;
 

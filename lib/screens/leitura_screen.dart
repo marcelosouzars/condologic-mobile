@@ -1,5 +1,3 @@
-// ==========================================>>> leitura_screen.dart
-
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -7,13 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'camera_screen.dart';
-import '../services/api_service.dart'; 
+import '../services/api_service.dart';
 
 class LeituraScreen extends StatefulWidget {
   final Map unidade;
   final Map medidor;
 
-  LeituraScreen({required this.unidade, required this.medidor});
+  const LeituraScreen({super.key, required this.unidade, required this.medidor});
 
   @override
   _LeituraScreenState createState() => _LeituraScreenState();
@@ -56,78 +54,71 @@ class _LeituraScreenState extends State<LeituraScreen> {
     setState(() => _isProcessing = true);
 
     try {
-      // COMPRESSÃO 
       final bytes = await File(path).readAsBytes();
+      
       img.Image? originalImage = img.decodeImage(bytes);
       if (originalImage == null) throw Exception("Falha ao decodificar imagem");
 
       img.Image resizedImage = img.copyResize(originalImage, width: 800);
-      List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 70);
+      List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 80);
       String base64Image = base64Encode(compressedBytes);
 
       bool online = await _temInternet();
 
       if (!online) {
         print("Sem conexão real. Salvando offline.");
-        await DatabaseHelper().salvarLeituraOffline(
-          widget.unidade['id'] ?? widget.unidade['unidade_id'] ?? 0, 
-          widget.medidor['id'], 
-          0.0, 
-          path 
-        );
         _mostrarAvisoOffline();
         return;
       }
 
-      // ENVIO BLINDADO
+      Map envio = {
+        'image': base64Image,
+        'medidor_id': widget.medidor['id'],
+        'tenant_id': widget.unidade['tenant_id'],
+        'leitura_anterior': widget.medidor['leitura_anterior']
+      };
+
       try {
         final response = await http.post(
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
           headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'image': base64Image,
-            'medidor_id': widget.medidor['id'],
-            'tenant_id': widget.unidade['tenant_id'],
-            'leitura_anterior': widget.medidor['leitura_anterior']
-          }),
+          body: jsonEncode(envio),
         ).timeout(const Duration(seconds: 30));
 
-        // === A BLINDAGEM SUPREMA DE TIPAGEM ESTÁ AQUI ===
-        String corpoResposta = response.body.trim();
-        
-        if (corpoResposta.startsWith('<')) {
-          throw Exception("O servidor bloqueou a imagem (muito pesada). Tente tirar a foto um pouco mais de longe.");
-        }
+        if (response.statusCode == 200) {
+          var corpoRetorno = response.body;
+          var leituraFinal = "Desconhecida";
 
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          String leituraFinal = "Valor não identificado";
-          
           try {
-            // Tenta decodificar de forma solta (sem forçar ser um Map)
-            var dadosDecodificados = jsonDecode(corpoResposta);
-            
-            // Se for um Dicionário, pega o valor. Se for Texto, usa o texto direto!
-            if (dadosDecodificados is Map) {
-              leituraFinal = dadosDecodificados['leitura']?.toString() ?? dadosDecodificados['valor']?.toString() ?? corpoResposta;
-            } else {
-              leituraFinal = dadosDecodificados.toString();
+            var data = jsonDecode(corpoRetorno);
+            if (data is String) {
+              try { data = jsonDecode(data); } catch (_) { leituraFinal = data; }
             }
+
+            if (data is Map) {
+              leituraFinal = data['leitura'].toString();
+            } else if (leituraFinal == "Desconhecida") {
+              leituraFinal = data.toString();
+            }
+            
+            leituraFinal = leituraFinal.replaceAll('.', ',');
+            _mostrarSucesso("A IA identificou o valor:\n\n$leituraFinal");
+            
           } catch (e) {
-            // Se não for JSON de jeito nenhum, a resposta é a própria leitura!
-            leituraFinal = corpoResposta;
+            String erroFormatado = corpoRetorno.toString().replaceAll('.', ',');
+            _mostrarSucesso("A IA identificou o valor (bruto):\n\n$erroFormatado");
           }
 
-          _mostrarSucesso(leituraFinal);
         } else {
-          throw Exception("Erro do Servidor: $corpoResposta");
+          _mostrarErro("Erro do Servidor (Código ${response.statusCode}): A IA falhou em processar.");
         }
 
       } catch (e) {
-         _mostrarErro("Falha de comunicação: ${e.toString().replaceAll('Exception: ', '')}");
+         _mostrarErro("Falha no servidor ou timeout. Tente novamente.");
       }
 
     } catch (e) {
-      _mostrarErro("Falha ao processar foto: ${e.toString().replaceAll('Exception: ', '')}");
+      _mostrarErro("Falha catastrófica ao preparar a foto.");
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -164,26 +155,43 @@ class _LeituraScreenState extends State<LeituraScreen> {
     );
   }
 
+  // =========================================================
+  // NOVO UX DE SUCESSO COM OPÇÃO DE REFAZER
+  // =========================================================
   void _mostrarSucesso(String mensagem) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         backgroundColor: Colors.white,
         title: const Icon(Icons.check_circle, color: Colors.green, size: 60),
         content: Text(
-          "LEITURA PROCESSADA!\n\nA IA identificou o valor:\n$mensagem\n\nO consumo foi calculado e salvo com sucesso.",
+          "LEITURA PROCESSADA!\n\n$mensagem",
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.black87, fontSize: 16),
+          style: const TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.bold),
         ),
+        actionsAlignment: MainAxisAlignment.spaceEvenly,
         actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Apenas fecha a janela
+              setState(() {
+                _imageFile = null; // Tira a foto da tela para bater outra
+              });
+            },
+            child: const Text("REFAZER", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16)),
+          ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context); 
-              Navigator.pop(context, true); 
+              Navigator.pop(context); // Fecha a janela
+              Navigator.pop(context, true); // Volta pra lista (e dispara o popup de pular unidade)
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-            child: const Text("OK, PRÓXIMA", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)
+            ),
+            child: const Text("CONFIRMAR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
           )
         ],
       ),
@@ -192,11 +200,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
 
   void _mostrarErro(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: const TextStyle(color: Colors.white)), 
-        backgroundColor: Colors.red, 
-        duration: const Duration(seconds: 6) 
-      ),
+      SnackBar(content: Text(msg, style: const TextStyle(color: Colors.white)), backgroundColor: Colors.red, duration: const Duration(seconds: 4)),
     );
   }
 

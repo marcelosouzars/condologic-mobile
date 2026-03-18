@@ -1,35 +1,40 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:image/image.dart' as img;
-import 'package:path_provider/path_provider.dart';
 
 class CameraScreen extends StatefulWidget {
+  const CameraScreen({super.key});
+
   @override
-  _CameraScreenState createState() => _CameraScreenState();
+  State<CameraScreen> createState() => _CameraScreenState();
 }
 
 class _CameraScreenState extends State<CameraScreen> {
   CameraController? _controller;
-  Future<void>? _initializeControllerFuture;
+  List<CameraDescription>? cameras;
+  bool _isReady = false;
 
   @override
   void initState() {
     super.initState();
-    _initCamera();
+    _setupCamera();
   }
 
-  Future<void> _initCamera() async {
-    final cameras = await availableCameras();
-    if (cameras.isEmpty) return;
-    
-    _controller = CameraController(
-      cameras.first,
-      ResolutionPreset.high,
-      enableAudio: false,
-    );
-    _initializeControllerFuture = _controller!.initialize();
-    if (mounted) setState(() {});
+  Future<void> _setupCamera() async {
+    try {
+      cameras = await availableCameras();
+      if (cameras != null && cameras!.isNotEmpty) {
+        // Usa a primeira câmera traseira disponível com alta resolução
+        _controller = CameraController(cameras![0], ResolutionPreset.high, enableAudio: false);
+        await _controller!.initialize();
+        if (mounted) {
+          setState(() {
+            _isReady = true;
+          });
+        }
+      }
+    } catch (e) {
+      print("Erro ao inicializar câmera: $e");
+    }
   }
 
   @override
@@ -38,80 +43,71 @@ class _CameraScreenState extends State<CameraScreen> {
     super.dispose();
   }
 
-  Future<void> _takePictureAndCrop() async {
+  Future<void> _takePicture() async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    
     try {
-      await _initializeControllerFuture;
-      final image = await _controller!.takePicture();
-      
-      final bytes = await File(image.path).readAsBytes();
-      img.Image? originalImage = img.decodeImage(bytes);
-
-      if (originalImage != null) {
-        int width = originalImage.width;
-        int height = originalImage.height;
-        
-        int cropHeight = (height * 0.20).toInt();
-        int cropTop = (height / 2 - cropHeight / 2).toInt();
-
-        img.Image croppedImage = img.copyCrop(
-          originalImage,
-          x: 0,
-          y: cropTop,
-          width: width,
-          height: cropHeight,
-        );
-        
-        final tempDir = await getTemporaryDirectory();
-        final croppedFile = File('${tempDir.path}/cropped_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        await croppedFile.writeAsBytes(img.encodeJpg(croppedImage, quality: 85));
-
-        Navigator.pop(context, croppedFile.path);
+      // Tira a foto
+      final XFile file = await _controller!.takePicture();
+      // Retorna o caminho da foto para a tela anterior (LeituraScreen)
+      if (mounted) {
+        Navigator.pop(context, file.path);
       }
     } catch (e) {
-      print("Erro ao capturar/recortar: $e");
+      print("Erro ao capturar foto: $e");
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!_isReady || _controller == null) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(child: CircularProgressIndicator(color: Colors.blueAccent)),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(title: Text("Centralize o Relógio"), backgroundColor: Colors.blueGrey[900]),
-      body: FutureBuilder<void>(
-        future: _initializeControllerFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.done) {
-            return Stack(
-              children: [
-                CameraPreview(_controller!),
-                Center(
-                  child: Container(
-                    width: double.infinity,
-                    height: 100,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.red, width: 3),
-                      color: Colors.red.withOpacity(0.1),
-                    ),
+      body: Stack(
+        children: [
+          // Preview da Câmera Ocupando a Tela Toda
+          Positioned.fill(
+            child: CameraPreview(_controller!),
+          ),
+          
+          // Botão de Captura
+          Positioned(
+            bottom: 40,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: GestureDetector(
+                onTap: _takePicture,
+                child: Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 4),
+                    color: Colors.white.withOpacity(0.3),
                   ),
+                  child: const Icon(Icons.camera, color: Colors.white, size: 40),
                 ),
-                Positioned(
-                  bottom: 30,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: FloatingActionButton(
-                      backgroundColor: Colors.red,
-                      child: Icon(Icons.camera_alt, color: Colors.white),
-                      onPressed: _takePictureAndCrop,
-                    ),
-                  ),
-                ),
-              ],
-            );
-          } else {
-            return Center(child: CircularProgressIndicator());
-          }
-        },
+              ),
+            ),
+          ),
+
+          // Botão de Voltar
+          Positioned(
+            top: 50,
+            left: 20,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 35),
+              onPressed: () => Navigator.pop(context),
+            ),
+          )
+        ],
       ),
     );
   }
