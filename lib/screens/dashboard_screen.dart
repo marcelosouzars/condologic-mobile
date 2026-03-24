@@ -67,6 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _sincronizarAutomaticamente() async {
     try {
       int quantidadeEnviada = await ApiService().sincronizarPendenciasOffline(widget.user['tenant_id']);
+
       if (quantidadeEnviada > 0 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("🔄 Auto-Sync: $quantidadeEnviada foto(s) enviada(s)!"), backgroundColor: Colors.green)
@@ -89,10 +90,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (todosLidos) {
       final todasAsUnidadesDoAndar = _todasUnidades.where((u) => u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado).toList();
+
       final aptosUnicos = todasAsUnidadesDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
       aptosUnicos.sort((a, b) => a.compareTo(b)); 
 
       int indexAtual = aptosUnicos.indexOf(_unidadeSelecionada!);
+
       if (indexAtual >= 0 && indexAtual < aptosUnicos.length - 1) {
         String proximoApto = aptosUnicos[indexAtual + 1];
         _mostrarDialogoProximaUnidade(proximoApto);
@@ -214,16 +217,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final unidadesDoBloco = _todasUnidades.where((u) => u['bloco_nome'] == _blocoSelecionado).toList();
     final andaresUnicos = unidadesDoBloco.map((u) => u['andar']?.toString() ?? 'Térreo').toSet().toList();
     
-    // ==============================================================
-    // A MÁGICA DA ORDENAÇÃO MATEMÁTICA DOS ANDARES
-    // ==============================================================
     andaresUnicos.sort((a, b) {
       int extrairNumero(String andar) {
         String limpo = andar.toLowerCase();
-        if (limpo.contains('térreo') || limpo.contains('terreo')) return 0; // Térreo sempre primeiro
+        if (limpo.contains('térreo') || limpo.contains('terreo')) return 0; 
         final regex = RegExp(r'\d+');
         final match = regex.firstMatch(andar);
-        return match != null ? int.parse(match.group(0)!) : 999; // Os sem número vão pro final
+        return match != null ? int.parse(match.group(0)!) : 999; 
       }
       return extrairNumero(a).compareTo(extrairNumero(b));
     });
@@ -254,6 +254,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final relogiosDoAndar = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado
     ).toList();
+
     final aptosUnicos = relogiosDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
     aptosUnicos.sort((a, b) => a.compareTo(b));
 
@@ -312,18 +313,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (tipo.contains('QUENTE')) icone = Icons.local_fire_department;
         if (tipo.contains('GÁS') || tipo.contains('GAS')) icone = Icons.propane;
 
+        // =========================================================
+        // MÁGICA DINÂMICA: Exibir as casas decimais corretas
+        // =========================================================
+        int casasDecimais = item['digitos_vermelhos'] ?? 3; 
+
+        String valorExibicao = 'Aguardando foto';
+        if (item['valor_lido'] != null) {
+          double? valParsed = double.tryParse(item['valor_lido'].toString());
+          if (valParsed != null) {
+            valorExibicao = 'Valor: ${valParsed.toStringAsFixed(casasDecimais).replaceAll('.', ',')}';
+          } else {
+            valorExibicao = 'Valor: ${item['valor_lido'].toString().replaceAll('.', ',')}';
+          }
+        }
+
         return Card(
           color: Colors.white, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           child: ListTile(
             leading: Icon(icone, color: corBolinha, size: 35),
             title: Text(tipo, style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 16)),
-            subtitle: Text(item['valor_lido'] != null ? 'Valor: ${item['valor_lido']}' : 'Aguardando foto', style: const TextStyle(color: Colors.grey)),
+            subtitle: Text(valorExibicao, style: const TextStyle(color: Colors.grey)),
             trailing: Icon(Icons.camera_alt, color: Colors.blue[900]),
             onTap: () {
               Map medidorData = {
                 'id': item['medidor_id'],
                 'tipo_medidor': tipo,
-                'leitura_anterior': item['leitura_anterior'] ?? '0.0'
+                'leitura_anterior': item['leitura_anterior'] ?? '0.0',
+                'digitos_vermelhos': casasDecimais 
               };
 
               item['tenant_id'] = widget.user['tenant_id'];
@@ -366,7 +383,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: _unidadeSelecionada != null
               ? _buildListaRelogiosDoApto()
               : _andarSelecionado != null
-                ? _buildListaApartamentos()
+                  ? _buildListaApartamentos()
                 : _blocoSelecionado != null
                   ? _buildListaAndares()
                   : _condominioSelecionado

@@ -95,10 +95,25 @@ class _LeituraScreenState extends State<LeituraScreen> {
               try { data = jsonDecode(data); } catch (_) { leituraFinal = data; }
             }
 
+            // =================================================================
+            // FORMATAÇÃO DINÂMICA NO POP-UP DE SUCESSO DA IA
+            // =================================================================
+            int casasDecimais = widget.medidor['digitos_vermelhos'] ?? 3;
+
             if (data is Map) {
-              leituraFinal = data['leitura'].toString();
+              double? parsedVal = double.tryParse(data['leitura'].toString());
+              if (parsedVal != null) {
+                leituraFinal = parsedVal.toStringAsFixed(casasDecimais);
+              } else {
+                leituraFinal = data['leitura'].toString();
+              }
             } else if (leituraFinal == "Desconhecida") {
-              leituraFinal = data.toString();
+              double? parsedVal = double.tryParse(data.toString());
+              if (parsedVal != null) {
+                leituraFinal = parsedVal.toStringAsFixed(casasDecimais);
+              } else {
+                leituraFinal = data.toString();
+              }
             }
             
             leituraFinal = leituraFinal.replaceAll('.', ',');
@@ -155,9 +170,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
     );
   }
 
-  // =========================================================
-  // NOVO UX DE SUCESSO COM OPÇÃO DE REFAZER
-  // =========================================================
   void _mostrarSucesso(String mensagem) {
     showDialog(
       context: context,
@@ -175,17 +187,17 @@ class _LeituraScreenState extends State<LeituraScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context); // Apenas fecha a janela
+              Navigator.pop(context); 
               setState(() {
-                _imageFile = null; // Tira a foto da tela para bater outra
+                _imageFile = null; 
               });
             },
             child: const Text("REFAZER", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16)),
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context); // Fecha a janela
-              Navigator.pop(context, true); // Volta pra lista (e dispara o popup de pular unidade)
+              Navigator.pop(context); 
+              Navigator.pop(context, true); 
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
@@ -206,6 +218,17 @@ class _LeituraScreenState extends State<LeituraScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // =================================================================
+    // FORMATAÇÃO DA LEITURA ANTERIOR DINÂMICA
+    // =================================================================
+    int casasDecimais = widget.medidor['digitos_vermelhos'] ?? 3;
+    
+    String leituraAnteriorFormatada = widget.medidor['leitura_anterior'].toString();
+    double? anteriorParsed = double.tryParse(leituraAnteriorFormatada);
+    if (anteriorParsed != null) {
+      leituraAnteriorFormatada = anteriorParsed.toStringAsFixed(casasDecimais).replaceAll('.', ',');
+    }
+
     return Scaffold(
       backgroundColor: Colors.blue[50], 
       appBar: AppBar(
@@ -223,7 +246,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
           ),
           const SizedBox(height: 10),
           Text(
-            "Leitura Anterior: ${widget.medidor['leitura_anterior']}",
+            "Leitura Anterior: $leituraAnteriorFormatada",
             style: TextStyle(color: Colors.grey[700], fontSize: 16),
           ),
           const SizedBox(height: 40),
