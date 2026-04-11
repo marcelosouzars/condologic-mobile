@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'camera_screen.dart';
 import '../services/api_service.dart';
-import '../database_helper.dart';
+import '../database_helper.dart'; // <--- GARANTA QUE O ARQUIVO ESTEJA EM lib/database_helper.dart
 
 class LeituraScreen extends StatefulWidget {
   final Map unidade;
@@ -26,7 +26,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
   Future<void> _capturarFoto() async {
     final String? path = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => CameraScreen()),
+      MaterialPageRoute(builder: (context) => const CameraScreen()),
     );
 
     if (path != null) {
@@ -82,7 +82,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
         if (response.statusCode == 200) {
           _tratarRespostaIA(response.body);
         } else {
-          // Se o servidor deu erro, também salvamos offline para não perder o trabalho
           await _guardarOffline(base64Image, path);
         }
       } catch (e) {
@@ -90,17 +89,18 @@ class _LeituraScreenState extends State<LeituraScreen> {
       }
 
     } catch (e) {
-      _mostrarErro("Falha catastrófica ao preparar a foto.");
+      _mostrarErro("Erro ao preparar foto.");
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
   }
 
+  // AQUI CORRIGIMOS A CHAMADA DA FUNÇÃO (Argumentos nomeados)
   Future<void> _guardarOffline(String base64, String path) async {
      await DatabaseHelper().salvarLeituraOffline(
         unidadeId: widget.unidade['unidade_id'] ?? 0, 
         medidorId: widget.medidor['id'], 
-        valor: 0.0, // A IA processará depois
+        valor: 0.0, 
         fotoPath: path,
         leituraAnterior: widget.medidor['leitura_anterior'].toString(),
         tenantId: widget.unidade['tenant_id']
@@ -135,7 +135,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
       builder: (context) => AlertDialog(
         backgroundColor: Colors.white,
         title: Row(children: [Icon(Icons.wifi_off, color: Colors.orange[800]), const SizedBox(width: 10), const Text("Salvo Offline")]),
-        content: const Text("Sem sinal de internet. A foto foi gravada no celular e será enviada sozinha assim que a conexão retornar."),
+        content: const Text("Sem internet no local. A foto foi salva e será enviada quando o sinal voltar."),
         actions: [
           ElevatedButton(
             onPressed: () { Navigator.pop(context); Navigator.pop(context, true); },
@@ -172,7 +172,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
 
   @override
   Widget build(BuildContext context) {
-    int casasDecimais = widget.medidor['digitos_vermelhos'] ?? 3;
     String leituraAnteriorFormatada = widget.medidor['leitura_anterior'].toString().replaceAll('.', ',');
 
     return Scaffold(

@@ -87,6 +87,7 @@ class DatabaseHelper {
     return await db.query('unidades', orderBy: 'identificacao ASC');
   }
 
+  // ESSA É A FUNÇÃO QUE ESTAVA DANDO ERRO DE ARGUMENTOS
   Future<int> salvarLeituraOffline({
     required int unidadeId, 
     required int medidorId, 
@@ -116,7 +117,6 @@ class DatabaseHelper {
     return id;
   }
 
-  // Novo método para o Auto-Sync buscar o que enviar
   Future<List<Map<String, dynamic>>> buscarPendentes() async {
     final db = await database;
     return await db.query('leituras_offline', where: 'enviado = 0');
