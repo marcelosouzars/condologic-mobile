@@ -15,7 +15,6 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDB() async {
-    // MUDANÇA 1: Mudamos o nome do arquivo para forçar a recriação do banco do zero!
     String path = join(await getDatabasesPath(), 'condologic_prod_v3.db'); 
     return await openDatabase(
       path,
@@ -23,7 +22,7 @@ class DatabaseHelper {
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE unidades (
-            medidor_id INTEGER PRIMARY KEY, -- MUDANÇA 2: A chave primária agora é o medidor!
+            medidor_id INTEGER PRIMARY KEY,
             unidade_id INTEGER,
             identificacao TEXT,
             bloco_nome TEXT,
@@ -32,7 +31,7 @@ class DatabaseHelper {
             leitura_anterior REAL,
             media_consumo REAL,
             valor_lido REAL,
-            tipo_medidor TEXT -- MUDANÇA 3: Adicionado para os ícones funcionarem offline
+            tipo_medidor TEXT
           )
         ''');
 
@@ -44,22 +43,23 @@ class DatabaseHelper {
             valor_lido REAL,
             caminho_foto TEXT,
             data_leitura TEXT,
-            enviado INTEGER DEFAULT 0
+            enviado INTEGER DEFAULT 0,
+            leitura_anterior TEXT,
+            tenant_id INTEGER
           )
         ''');
       },
     );
   }
 
-  // --- MÉTODOS DE CACHE ---
   Future<void> salvarUnidadesCache(List<dynamic> unidades) async {
     final db = await database;
     await db.delete('unidades'); 
     
     Batch batch = db.batch();
     for (var u in unidades) {
-      double leituraAnt = double.tryParse(u['leitura_anterior'].toString()) ?? 0.0;
-      double mediaCons = double.tryParse(u['media_consumo'].toString()) ?? 0.0;
+      double leituraAnt = double.tryParse(u['leitura_anterior']?.toString() ?? '0.0') ?? 0.0;
+      double mediaCons = double.tryParse(u['media_consumo']?.toString() ?? '0.0') ?? 0.0;
       double? valorLido;
       
       if (u['valor_lido'] != null) {
@@ -87,7 +87,14 @@ class DatabaseHelper {
     return await db.query('unidades', orderBy: 'identificacao ASC');
   }
 
-  Future<int> salvarLeituraOffline(int unidadeId, int medidorId, double valor, String fotoPath) async {
+  Future<int> salvarLeituraOffline({
+    required int unidadeId, 
+    required int medidorId, 
+    required double valor, 
+    required String fotoPath,
+    required String leituraAnterior,
+    required int tenantId
+  }) async {
     final db = await database;
     int id = await db.insert('leituras_offline', {
       'unidade_id': unidadeId,
@@ -95,10 +102,11 @@ class DatabaseHelper {
       'valor_lido': valor,
       'caminho_foto': fotoPath,
       'data_leitura': DateTime.now().toIso8601String(),
-      'enviado': 0
+      'enviado': 0,
+      'leitura_anterior': leituraAnterior,
+      'tenant_id': tenantId
     });
     
-    // Atualiza apenas a "bolinha amarela" do medidor específico que foi lido
     await db.update(
       'unidades', 
       {'status_cor': 'amarelo', 'valor_lido': valor}, 
@@ -106,5 +114,16 @@ class DatabaseHelper {
       whereArgs: [medidorId]
     );
     return id;
+  }
+
+  // Novo método para o Auto-Sync buscar o que enviar
+  Future<List<Map<String, dynamic>>> buscarPendentes() async {
+    final db = await database;
+    return await db.query('leituras_offline', where: 'enviado = 0');
+  }
+
+  Future<void> marcarComoEnviado(int id) async {
+    final db = await database;
+    await db.update('leituras_offline', {'enviado': 1}, where: 'id = ?', whereArgs: [id]);
   }
 }
