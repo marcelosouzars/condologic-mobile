@@ -37,7 +37,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
     }
   }
 
-  FFuture<void> _processarOuSalvar(String path) async {
+  Future<void> _processarOuSalvar(String path) async {
     setState(() => _isProcessing = true);
 
     try {
