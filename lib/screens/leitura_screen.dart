@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'camera_screen.dart';
 import '../services/api_service.dart';
-import '../database_helper.dart'; // <--- GARANTA QUE O ARQUIVO ESTEJA EM lib/database_helper.dart
+import '../database_helper.dart'; 
 
 class LeituraScreen extends StatefulWidget {
   final Map unidade;
@@ -37,19 +37,11 @@ class _LeituraScreenState extends State<LeituraScreen> {
     }
   }
 
-  Future<bool> _temInternet() async {
-    try {
-      final result = await InternetAddress.lookup('google.com').timeout(const Duration(seconds: 5));
-      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
-    } catch (_) {
-      return false;
-    }
-  }
-
   Future<void> _processarOuSalvar(String path) async {
     setState(() => _isProcessing = true);
 
     try {
+      // 1. Processamento e Compressão da Imagem
       final bytes = await File(path).readAsBytes();
       img.Image? originalImage = img.decodeImage(bytes);
       if (originalImage == null) throw Exception("Falha ao decodificar imagem");
@@ -58,13 +50,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
       List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 80);
       String base64Image = base64Encode(compressedBytes);
 
-      bool online = await _temInternet();
-
-      if (!online) {
-        await _guardarOffline(base64Image, path);
-        return;
-      }
-
+      // 2. Monta o pacote de envio
       Map envio = {
         'image': base64Image,
         'medidor_id': widget.medidor['id'],
@@ -72,19 +58,27 @@ class _LeituraScreenState extends State<LeituraScreen> {
         'leitura_anterior': widget.medidor['leitura_anterior']
       };
 
+      // 3. TENTATIVA DIRETA DE ENVIO (Tiro Certo)
+      // Removemos o "ping" manual no Google. Vamos direto ao backend.
+      // Timeout aumentado para 60 segundos para vencer o Cold Start do Render.
       try {
         final response = await http.post(
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(envio),
-        ).timeout(const Duration(seconds: 30));
+        ).timeout(const Duration(seconds: 60));
 
         if (response.statusCode == 200) {
           _tratarRespostaIA(response.body);
         } else {
+          // Servidor respondeu com erro (500, 502, etc), garantimos no offline
+          print("Erro do servidor: ${response.statusCode}");
           await _guardarOffline(base64Image, path);
         }
       } catch (e) {
+        // Cai aqui instantaneamente se não tiver internet (SocketException)
+        // Ou cai aqui após 60s se o servidor não responder (TimeoutException)
+        print("Sinal ausente ou timeout do servidor: $e");
         await _guardarOffline(base64Image, path);
       }
 
@@ -95,7 +89,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
     }
   }
 
-  // AQUI CORRIGIMOS A CHAMADA DA FUNÇÃO (Argumentos nomeados)
   Future<void> _guardarOffline(String base64, String path) async {
      await DatabaseHelper().salvarLeituraOffline(
         unidadeId: widget.unidade['unidade_id'] ?? 0, 
@@ -134,13 +127,14 @@ class _LeituraScreenState extends State<LeituraScreen> {
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: Colors.white,
-        title: Row(children: [Icon(Icons.wifi_off, color: Colors.orange[800]), const SizedBox(width: 10), const Text("Salvo Offline")]),
-        content: const Text("Sem internet no local. A foto foi salva e será enviada quando o sinal voltar."),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: Row(children: [Icon(Icons.wifi_off, color: Colors.orange[800]), const SizedBox(width: 10), const Text("Fila de Envio")]),
+        content: const Text("O sinal oscilou ou o servidor está iniciando. A foto foi salva com sucesso e será enviada em instantes pela sincronização!"),
         actions: [
           ElevatedButton(
             onPressed: () { Navigator.pop(context); Navigator.pop(context, true); },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800]),
-            child: const Text("ENTENDIDO", style: TextStyle(color: Colors.white)),
+            child: const Text("ENTENDIDO", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           )
         ],
       ),
@@ -202,7 +196,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
           ),
           const SizedBox(height: 50),
           if (_isProcessing)
-            Column(children: [CircularProgressIndicator(color: Colors.blue[900]), const SizedBox(height: 20), const Text("PROCESSANDO...")] )
+            Column(children: [CircularProgressIndicator(color: Colors.blue[900]), const SizedBox(height: 20), const Text("PROCESSANDO...", style: TextStyle(fontWeight: FontWeight.bold))] )
           else
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40),
