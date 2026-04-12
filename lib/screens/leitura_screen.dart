@@ -37,11 +37,10 @@ class _LeituraScreenState extends State<LeituraScreen> {
     }
   }
 
-  Future<void> _processarOuSalvar(String path) async {
+  FFuture<void> _processarOuSalvar(String path) async {
     setState(() => _isProcessing = true);
 
     try {
-      // 1. Processamento e Compressão da Imagem
       final bytes = await File(path).readAsBytes();
       img.Image? originalImage = img.decodeImage(bytes);
       if (originalImage == null) throw Exception("Falha ao decodificar imagem");
@@ -50,7 +49,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
       List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 80);
       String base64Image = base64Encode(compressedBytes);
 
-      // 2. Monta o pacote de envio
       Map envio = {
         'image': base64Image,
         'medidor_id': widget.medidor['id'],
@@ -58,9 +56,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
         'leitura_anterior': widget.medidor['leitura_anterior']
       };
 
-      // 3. TENTATIVA DIRETA DE ENVIO (Tiro Certo)
-      // Removemos o "ping" manual no Google. Vamos direto ao backend.
-      // Timeout aumentado para 60 segundos para vencer o Cold Start do Render.
       try {
         final response = await http.post(
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
@@ -71,19 +66,21 @@ class _LeituraScreenState extends State<LeituraScreen> {
         if (response.statusCode == 200) {
           _tratarRespostaIA(response.body);
         } else {
-          // Servidor respondeu com erro (500, 502, etc), garantimos no offline
-          print("Erro do servidor: ${response.statusCode}");
+          // SE O SERVIDOR DEVOLVER ERRO (Ex: 500), VAMOS VER NA TELA!
+          _mostrarErro("ERRO SERVIDOR: Código ${response.statusCode}");
+          print("Corpo do Erro: ${response.body}"); // Joga no console do VS Code
+          await Future.delayed(const Duration(seconds: 4)); // Pausa pra ler
           await _guardarOffline(base64Image, path);
         }
       } catch (e) {
-        // Cai aqui instantaneamente se não tiver internet (SocketException)
-        // Ou cai aqui após 60s se o servidor não responder (TimeoutException)
-        print("Sinal ausente ou timeout do servidor: $e");
+        // SE A REDE FALHAR OU DER TIMEOUT, VAMOS VER O MOTIVO EXATO!
+        _mostrarErro("FALHA DE REDE/APP: $e");
+        await Future.delayed(const Duration(seconds: 4)); // Pausa pra ler
         await _guardarOffline(base64Image, path);
       }
 
     } catch (e) {
-      _mostrarErro("Erro ao preparar foto.");
+      _mostrarErro("Erro interno ao preparar foto: $e");
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
