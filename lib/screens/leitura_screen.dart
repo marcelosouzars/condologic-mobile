@@ -11,7 +11,6 @@ import '../database_helper.dart';
 class LeituraScreen extends StatefulWidget {
   final Map unidade;
   final Map medidor;
-
   const LeituraScreen({super.key, required this.unidade, required this.medidor});
 
   @override
@@ -28,7 +27,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
       context,
       MaterialPageRoute(builder: (context) => const CameraScreen()),
     );
-
     if (path != null) {
       setState(() {
         _imageFile = File(path);
@@ -39,7 +37,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
 
   Future<void> _processarOuSalvar(String path) async {
     setState(() => _isProcessing = true);
-
     try {
       final bytes = await File(path).readAsBytes();
       img.Image? originalImage = img.decodeImage(bytes);
@@ -48,7 +45,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
       img.Image resizedImage = img.copyResize(originalImage, width: 800);
       List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 80);
       String base64Image = base64Encode(compressedBytes);
-
+      
       Map envio = {
         'image': base64Image,
         'medidor_id': widget.medidor['id'],
@@ -61,22 +58,28 @@ class _LeituraScreenState extends State<LeituraScreen> {
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(envio),
-        ).timeout(const Duration(seconds: 60));
+        ).timeout(const Duration(seconds: 40));
 
         if (response.statusCode == 200) {
           _tratarRespostaIA(response.body);
         } else {
-          // SE O SERVIDOR DEVOLVER ERRO (Ex: 500), VAMOS VER NA TELA!
-          _mostrarErro("ERRO SERVIDOR: Código ${response.statusCode}");
-          print("Corpo do Erro: ${response.body}"); // Joga no console do VS Code
-          await Future.delayed(const Duration(seconds: 4)); // Pausa pra ler
-          await _guardarOffline(base64Image, path);
+          // TEM INTERNET, MAS O SERVIDOR OU A IA DEU ERRO (500)
+          // O síndico precisa ver o erro e tentar novamente. Não vai para a fila!
+          _mostrarErro("O Servidor rejeitou a foto (Erro ${response.statusCode}). Tente novamente.");
         }
-      } catch (e) {
-        // SE A REDE FALHAR OU DER TIMEOUT, VAMOS VER O MOTIVO EXATO!
-        _mostrarErro("FALHA DE REDE/APP: $e");
-        await Future.delayed(const Duration(seconds: 4)); // Pausa pra ler
+      } on SocketException catch (_) {
+        // SEM INTERNET / SEM SINAL REAL
+        _mostrarErro("Sem conexão com a internet. Salvando na fila offline...");
+        await Future.delayed(const Duration(seconds: 2));
         await _guardarOffline(base64Image, path);
+      } on TimeoutException catch (_) {
+        // SINAL DE CELULAR MUITO LENTO/FRACO
+        _mostrarErro("Sinal 4G muito fraco. Salvando na fila offline...");
+        await Future.delayed(const Duration(seconds: 2));
+        await _guardarOffline(base64Image, path);
+      } catch (e) {
+        // OUTROS ERROS LOCAIS DE APLICATIVO
+        _mostrarErro("Erro na requisição: $e");
       }
 
     } catch (e) {
@@ -95,17 +98,15 @@ class _LeituraScreenState extends State<LeituraScreen> {
         leituraAnterior: widget.medidor['leitura_anterior'].toString(),
         tenantId: widget.unidade['tenant_id']
       );
-      _mostrarAvisoOffline();
+     _mostrarAvisoOffline();
   }
 
   void _tratarRespostaIA(String corpo) {
     var leituraFinal = "Desconhecida";
     int casasDecimais = widget.medidor['digitos_vermelhos'] ?? 3;
-
     try {
       var data = jsonDecode(corpo);
       if (data is String) data = jsonDecode(data);
-
       if (data is Map) {
         double? parsedVal = double.tryParse(data['leitura'].toString());
         leituraFinal = parsedVal?.toStringAsFixed(casasDecimais) ?? data['leitura'].toString();
@@ -126,7 +127,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
         backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         title: Row(children: [Icon(Icons.wifi_off, color: Colors.orange[800]), const SizedBox(width: 10), const Text("Fila de Envio")]),
-        content: const Text("O sinal oscilou ou o servidor está iniciando. A foto foi salva com sucesso e será enviada em instantes pela sincronização!"),
+        content: const Text("A foto foi salva de forma segura no celular e será enviada em instantes pela sincronização automática!"),
         actions: [
           ElevatedButton(
             onPressed: () { Navigator.pop(context); Navigator.pop(context, true); },
@@ -164,7 +165,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
   @override
   Widget build(BuildContext context) {
     String leituraAnteriorFormatada = widget.medidor['leitura_anterior'].toString().replaceAll('.', ',');
-
     return Scaffold(
       backgroundColor: Colors.blue[50],
       appBar: AppBar(
