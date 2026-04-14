@@ -28,14 +28,13 @@ class _LeituraScreenState extends State<LeituraScreen> {
       MaterialPageRoute(builder: (context) => const CameraScreen()),
     );
     if (path != null) {
-      setState(() {
-        _imageFile = File(path);
-      });
-      _processarOuSalvar(path);
+      setState(() => _imageFile = File(path));
+      _processarIA(path);
     }
   }
 
-  Future<void> _processarOuSalvar(String path) async {
+  // ETAPA 1: APENAS LÊ O NÚMERO COM A IA
+  Future<void> _processarIA(String path) async {
     setState(() => _isProcessing = true);
     try {
       final bytes = await File(path).readAsBytes();
@@ -43,14 +42,12 @@ class _LeituraScreenState extends State<LeituraScreen> {
       if (originalImage == null) throw Exception("Falha ao decodificar imagem");
 
       img.Image resizedImage = img.copyResize(originalImage, width: 800);
-      List<int> compressedBytes = img.encodeJpg(resizedImage, quality: 80);
-      String base64Image = base64Encode(compressedBytes);
+      String base64Image = base64Encode(img.encodeJpg(resizedImage, quality: 80));
       
       Map envio = {
         'image': base64Image,
         'medidor_id': widget.medidor['id'],
-        'tenant_id': widget.unidade['tenant_id'],
-        'leitura_anterior': widget.medidor['leitura_anterior']
+        'apenas_ler': true // AVISA O BACKEND PARA NÃO SALVAR AINDA
       };
 
       try {
@@ -61,37 +58,138 @@ class _LeituraScreenState extends State<LeituraScreen> {
         ).timeout(const Duration(seconds: 40));
 
         if (response.statusCode == 200) {
-          _tratarRespostaIA(response.body);
+          var data = jsonDecode(response.body);
+          double valorIA = double.tryParse(data['leitura'].toString()) ?? 0.0;
+          if (mounted) _mostrarDialogoConfirmacao(valorIA, base64Image, path);
         } else {
-          _mostrarErro("Erro no Servidor: Código ${response.statusCode}\nTente novamente.");
+          _mostrarErro("Erro na IA: Código ${response.statusCode}");
         }
       } on SocketException catch (e) {
-        // AGORA VAMOS VER O ERRO EXATO NA TELA!
-        _mostrarErro("MOTO OFFLINE ATIVADO!\nMotivo: ${e.message}\nSalvando na fila...");
-        await Future.delayed(const Duration(seconds: 4));
-        await _guardarOffline(base64Image, path);
+        _mostrarErro("Sem internet. Guardando para ler e salvar depois...");
+        await Future.delayed(const Duration(seconds: 2));
+        await _guardarOffline(base64Image, path, 0.0);
       } on TimeoutException catch (_) {
-        _mostrarErro("Sinal oscilando muito (Timeout).\nSalvando na fila...");
-        await Future.delayed(const Duration(seconds: 3));
-        await _guardarOffline(base64Image, path);
+        _mostrarErro("Sinal fraco. Guardando para ler e salvar depois...");
+        await Future.delayed(const Duration(seconds: 2));
+        await _guardarOffline(base64Image, path, 0.0);
       } catch (e) {
-        _mostrarErro("Erro desconhecido na rede:\n$e");
-        await Future.delayed(const Duration(seconds: 4));
-        await _guardarOffline(base64Image, path);
+        _mostrarErro("Erro de rede: $e");
       }
-
     } catch (e) {
-      _mostrarErro("Erro interno ao preparar foto: $e");
+      _mostrarErro("Erro interno: $e");
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
   }
 
-  Future<void> _guardarOffline(String base64, String path) async {
+  // ETAPA 2: A JANELA INTERATIVA (CONFIRMAR, EDITAR OU REPETIR)
+  void _mostrarDialogoConfirmacao(double valorIA, String base64Image, String path) {
+    int casasDecimais = widget.medidor['digitos_vermelhos'] ?? 3;
+    TextEditingController controller = TextEditingController(text: valorIA.toStringAsFixed(casasDecimais).replaceAll('.', ','));
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        bool isSaving = false;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Text("Confirme a Leitura", textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text("Você pode digitar para corrigir:"),
+                  const SizedBox(height: 15),
+                  TextField(
+                    controller: controller,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.blue),
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      suffixText: "m³"
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  if (isSaving) const CircularProgressIndicator()
+                ],
+              ),
+              actionsAlignment: MainAxisAlignment.center,
+              actions: [
+                TextButton(
+                  onPressed: isSaving ? null : () {
+                    Navigator.pop(context); // Fecha janela
+                    _capturarFoto(); // Tira outra foto
+                  },
+                  child: const Text("REPETIR FOTO", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                ),
+                ElevatedButton(
+                  onPressed: isSaving ? null : () async {
+                    setStateDialog(() => isSaving = true);
+                    String valText = controller.text.replaceAll(',', '.');
+                    double valorFinal = double.tryParse(valText) ?? valorIA;
+                    
+                    bool sucesso = await _salvarDefinitivo(valorFinal, base64Image, path);
+                    if (sucesso && mounted) {
+                      Navigator.pop(context); // Fecha janela
+                      Navigator.pop(context, true); // Volta pra lista (destrava a tela)
+                    } else {
+                      setStateDialog(() => isSaving = false);
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
+                  child: const Text("SALVAR LEITURA", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                )
+              ],
+            );
+          }
+        );
+      }
+    );
+  }
+
+  // ETAPA 3: ROTA DE SALVAMENTO NO BANCO
+  Future<bool> _salvarDefinitivo(double valorFinal, String base64Image, String path) async {
+    Map envio = {
+      'valor_lido': valorFinal,
+      'image': base64Image,
+      'medidor_id': widget.medidor['id'],
+      'tenant_id': widget.unidade['tenant_id'],
+      'leitura_anterior': widget.medidor['leitura_anterior']
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/leitura/salvar'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(envio),
+      ).timeout(const Duration(seconds: 20));
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Leitura salva com sucesso!"), backgroundColor: Colors.green));
+        return true;
+      } else {
+        _mostrarErro("Falha ao salvar no banco.");
+        return false;
+      }
+    } on SocketException catch (_) {
+      _mostrarErro("Ficou Offline. Guardando o valor digitado na fila...");
+      await Future.delayed(const Duration(seconds: 2));
+      await _guardarOffline(base64Image, path, valorFinal); // Salva o valor confirmado!
+      return true;
+    } catch (e) {
+      _mostrarErro("Erro de rede ao salvar.");
+      return false;
+    }
+  }
+
+  Future<void> _guardarOffline(String base64, String path, double valorManual) async {
      await DatabaseHelper().salvarLeituraOffline(
         unidadeId: widget.unidade['unidade_id'] ?? 0, 
         medidorId: widget.medidor['id'], 
-        valor: 0.0, 
+        valor: valorManual, // Agora salva o valor real
         fotoPath: path,
         leituraAnterior: widget.medidor['leitura_anterior'].toString(),
         tenantId: widget.unidade['tenant_id']
@@ -99,69 +197,21 @@ class _LeituraScreenState extends State<LeituraScreen> {
      _mostrarAvisoOffline();
   }
 
-  void _tratarRespostaIA(String corpo) {
-    var leituraFinal = "Desconhecida";
-    int casasDecimais = widget.medidor['digitos_vermelhos'] ?? 3;
-    try {
-      var data = jsonDecode(corpo);
-      if (data is String) data = jsonDecode(data);
-      if (data is Map) {
-        double? parsedVal = double.tryParse(data['leitura'].toString());
-        leituraFinal = parsedVal?.toStringAsFixed(casasDecimais) ?? data['leitura'].toString();
-      }
-      
-      leituraFinal = leituraFinal.replaceAll('.', ',');
-      _mostrarSucesso("A IA identificou o valor:\n\n$leituraFinal");
-    } catch (e) {
-      _mostrarSucesso("Leitura enviada! O sistema processará o valor.");
-    }
-  }
-
   void _mostrarAvisoOffline() {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         title: Row(children: [Icon(Icons.wifi_off, color: Colors.orange[800]), const SizedBox(width: 10), const Text("Fila de Envio")]),
-        content: const Text("A foto foi salva de forma segura no celular e será enviada em instantes pela sincronização automática!"),
-        actions: [
-          ElevatedButton(
-            onPressed: () { Navigator.pop(context); Navigator.pop(context, true); },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800]),
-            child: const Text("ENTENDIDO", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          )
-        ],
-      ),
-    );
-  }
-
-  void _mostrarSucesso(String mensagem) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Icon(Icons.check_circle, color: Colors.green, size: 60),
-        content: Text(mensagem, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        actions: [
-          ElevatedButton(
-            onPressed: () { Navigator.pop(context); Navigator.pop(context, true); },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-            child: const Text("CONFIRMAR", style: TextStyle(color: Colors.white)),
-          )
-        ],
+        content: const Text("Salvo no celular! Será enviado automaticamente quando recuperar a internet."),
+        actions: [ElevatedButton(onPressed: () { Navigator.pop(context); Navigator.pop(context, true); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800]), child: const Text("OK", style: TextStyle(color: Colors.white)))]
       ),
     );
   }
 
   void _mostrarErro(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)), 
-      backgroundColor: Colors.red,
-      duration: const Duration(seconds: 4),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)), backgroundColor: Colors.red, duration: const Duration(seconds: 4)));
   }
 
   @override
@@ -169,11 +219,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
     String leituraAnteriorFormatada = widget.medidor['leitura_anterior'].toString().replaceAll('.', ',');
     return Scaffold(
       backgroundColor: Colors.blue[50],
-      appBar: AppBar(
-        title: Text("Unidade ${widget.unidade['identificacao']}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.blue[900],
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
+      appBar: AppBar(title: Text("Unidade ${widget.unidade['identificacao']}", style: const TextStyle(color: Colors.white)), backgroundColor: Colors.blue[900], iconTheme: const IconThemeData(color: Colors.white)),
       body: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -184,30 +230,15 @@ class _LeituraScreenState extends State<LeituraScreen> {
           Center(
             child: _imageFile == null
                 ? Icon(Icons.image_search, size: 150, color: Colors.blue[100])
-                : Container(
-                    height: 180, width: double.infinity, margin: const EdgeInsets.symmetric(horizontal: 20),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.blue[900]!, width: 3),
-                      borderRadius: BorderRadius.circular(10),
-                      image: DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover),
-                    ),
-                  ),
+                : Container(height: 180, width: double.infinity, margin: const EdgeInsets.symmetric(horizontal: 20), decoration: BoxDecoration(border: Border.all(color: Colors.blue[900]!, width: 3), borderRadius: BorderRadius.circular(10), image: DecorationImage(image: FileImage(_imageFile!), fit: BoxFit.cover))),
           ),
           const SizedBox(height: 50),
           if (_isProcessing)
-            Column(children: [CircularProgressIndicator(color: Colors.blue[900]), const SizedBox(height: 20), const Text("PROCESSANDO...", style: TextStyle(fontWeight: FontWeight.bold))] )
+            Column(children: [CircularProgressIndicator(color: Colors.blue[900]), const SizedBox(height: 20), const Text("EXTRAINDO LEITURA...", style: TextStyle(fontWeight: FontWeight.bold))])
           else
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: SizedBox(
-                width: double.infinity, height: 70,
-                child: ElevatedButton.icon(
-                  onPressed: _capturarFoto,
-                  icon: const Icon(Icons.camera_alt, size: 30, color: Colors.white),
-                  label: const Text("TIRAR FOTO DO RELÓGIO", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
-                ),
-              ),
+              child: SizedBox(width: double.infinity, height: 70, child: ElevatedButton.icon(onPressed: _capturarFoto, icon: const Icon(Icons.camera_alt, size: 30, color: Colors.white), label: const Text("TIRAR FOTO", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))))),
             ),
         ],
       ),
