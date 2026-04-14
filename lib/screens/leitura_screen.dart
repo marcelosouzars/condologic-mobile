@@ -63,23 +63,21 @@ class _LeituraScreenState extends State<LeituraScreen> {
         if (response.statusCode == 200) {
           _tratarRespostaIA(response.body);
         } else {
-          // TEM INTERNET, MAS O SERVIDOR OU A IA DEU ERRO (500)
-          // O síndico precisa ver o erro e tentar novamente. Não vai para a fila!
-          _mostrarErro("O Servidor rejeitou a foto (Erro ${response.statusCode}). Tente novamente.");
+          _mostrarErro("Erro no Servidor: Código ${response.statusCode}\nTente novamente.");
         }
-      } on SocketException catch (_) {
-        // SEM INTERNET / SEM SINAL REAL
-        _mostrarErro("Sem conexão com a internet. Salvando na fila offline...");
-        await Future.delayed(const Duration(seconds: 2));
+      } on SocketException catch (e) {
+        // AGORA VAMOS VER O ERRO EXATO NA TELA!
+        _mostrarErro("MOTO OFFLINE ATIVADO!\nMotivo: ${e.message}\nSalvando na fila...");
+        await Future.delayed(const Duration(seconds: 4));
         await _guardarOffline(base64Image, path);
       } on TimeoutException catch (_) {
-        // SINAL DE CELULAR MUITO LENTO/FRACO
-        _mostrarErro("Sinal 4G muito fraco. Salvando na fila offline...");
-        await Future.delayed(const Duration(seconds: 2));
+        _mostrarErro("Sinal oscilando muito (Timeout).\nSalvando na fila...");
+        await Future.delayed(const Duration(seconds: 3));
         await _guardarOffline(base64Image, path);
       } catch (e) {
-        // OUTROS ERROS LOCAIS DE APLICATIVO
-        _mostrarErro("Erro na requisição: $e");
+        _mostrarErro("Erro desconhecido na rede:\n$e");
+        await Future.delayed(const Duration(seconds: 4));
+        await _guardarOffline(base64Image, path);
       }
 
     } catch (e) {
@@ -159,7 +157,11 @@ class _LeituraScreenState extends State<LeituraScreen> {
   }
 
   void _mostrarErro(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)), 
+      backgroundColor: Colors.red,
+      duration: const Duration(seconds: 4),
+    ));
   }
 
   @override

@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -32,10 +34,32 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // =======================================================
+  // NOVO: TESTE DE CONEXÃO RAIO-X
+  // =======================================================
+  Future<void> _testarConexao() async {
+    setState(() => _isLoading = true);
+    try {
+      // Tentamos bater direto no servidor para ver se a internet deixa passar
+      final response = await http.get(
+        Uri.parse("https://condologic-backend.onrender.com")
+      ).timeout(const Duration(seconds: 15));
+      
+      _mostrarSucesso("CONEXÃO EXCELENTE!\nO servidor respondeu com sucesso.\nSua internet está liberada para o app.");
+    } on SocketException catch (e) {
+      _mostrarErroGrave("FALHA CRÍTICA DE INTERNET (SocketException):\n${e.message}\nVerifique se o app tem permissão de dados.");
+    } on TimeoutException catch (_) {
+      _mostrarErroGrave("SINAL LENTO (Timeout):\nA internet está ativa, mas demorou mais de 15 segundos para alcançar o servidor.");
+    } catch (e) {
+      _mostrarErroGrave("ERRO DESCONHECIDO:\n$e");
+    } finally {
+      if(mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _fazerLogin() async {
     String cpf = _cpfController.text.trim();
     String senha = _passController.text.trim();
-
     if (cpf.isEmpty || senha.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Informe CPF e Senha")));
       return;
@@ -60,17 +84,47 @@ class _LoginScreenState extends State<LoginScreen> {
           MaterialPageRoute(builder: (context) => DashboardScreen(user: userData)),
         );
       } else {
-        _mostrarErro("Usuário ou Senha inválidos");
+        _mostrarErroGrave("Usuário ou Senha inválidos (Erro ${response.statusCode})");
       }
     } catch (e) {
-      _mostrarErro("Erro de conexão. Verifique sua internet.");
+      _mostrarErroGrave("ERRO DE REDE NO LOGIN:\n$e");
     } finally {
       if(mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _mostrarErro(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+  void _mostrarErroGrave(String msg) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: const Icon(Icons.error_outline, color: Colors.red, size: 50),
+        content: Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("FECHAR", style: TextStyle(color: Colors.red)),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _mostrarSucesso(String msg) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: const Icon(Icons.wifi, color: Colors.green, size: 50),
+        content: Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("OK", style: TextStyle(color: Colors.green)),
+          )
+        ],
+      ),
+    );
   }
 
   @override
@@ -111,7 +165,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     "SISTEMA DE FOTOMETRIA", 
                     style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)
                   ),
-                  const SizedBox(height: 220), 
+                  const SizedBox(height: 150), 
                   Card(
                     elevation: 8,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -161,6 +215,21 @@ class _LoginScreenState extends State<LoginScreen> {
                               child: _isLoading 
                                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                                 : const Text("ENTRAR", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+                          // BOTÃO DE DIAGNÓSTICO DE REDE
+                          SizedBox(
+                            width: double.infinity,
+                            height: 45,
+                            child: OutlinedButton.icon(
+                              onPressed: _isLoading ? null : _testarConexao,
+                              icon: const Icon(Icons.wifi_find, color: Colors.green),
+                              label: const Text("TESTAR REDE/SERVIDOR", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.green, width: 2),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
                             ),
                           ),
                         ],
