@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'package:shared_preferences/shared_preferences.dart'; // <--- IMPORTANTE PARA O LOGOUT
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'login_screen.dart'; // <--- IMPORTANTE PARA VOLTAR AO LOGIN
 import 'leitura_screen.dart';
+import 'login_screen.dart';
+import 'selecao_condominio_screen.dart';
+import 'unidades_screen.dart';
 import '../services/api_service.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -33,8 +35,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _carregarDados();
+    
+    // Timer para forçar sync a cada 60s
     _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) => _sincronizarAutomaticamente());
     
+    // =============================================================
+    // AUTO-SYNC: Escuta a volta da internet em tempo real
+    // =============================================================
     _subscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
       if (results.isNotEmpty && !results.contains(ConnectivityResult.none)) {
         _sincronizarAutomaticamente();
@@ -45,7 +52,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _syncTimer?.cancel(); 
-    _subscription.cancel(); 
+    _subscription.cancel();
     super.dispose();
   }
 
@@ -53,30 +60,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // FUNÇÃO DE LOGOUT SEGURO
   // ==========================================
   Future<void> _fazerLogout() async {
-    int pendentes = await ApiService().dbHelper.contarPendentes();
+    final listaPendentes = await ApiService().dbHelper.buscarPendentes();
+    int pendentes = listaPendentes.length;
     
     if (pendentes > 0) {
-      // Bloqueia o logout se tiver foto na fila!
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Row(children: [Icon(Icons.warning, color: Colors.red), SizedBox(width: 10), Text("Atenção!")]),
-          content: Text("Você tem $pendentes foto(s) na fila aguardando internet. Conecte-se à internet e aguarde o envio antes de sair para não perder os dados."),
+          content: Text("Você tem $pendentes foto(s) na fila aguardando internet. Aguarde o envio automático antes de sair para não perder os dados."),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ENTENDIDO", style: TextStyle(color: Colors.blue)))
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK", style: TextStyle(fontWeight: FontWeight.bold)))
           ],
         )
       );
     } else {
-      // Limpa a memória e volta pro Login
       SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.clear();
       if (mounted) {
-        Navigator.pushAndRemoveUntil(
-          context, 
-          MaterialPageRoute(builder: (context) => LoginScreen()), 
-          (Route<dynamic> route) => false
-        );
+        Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (context) => LoginScreen()), (Route<dynamic> route) => false);
       }
     }
   }
@@ -152,28 +154,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: const Column(children: [
             Icon(Icons.check_circle, color: Colors.green, size: 60),
             SizedBox(height: 10),
-            Text("Unidade Concluída!", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+            Text("Concluído!", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
         ]),
-        content: Text("Deseja ir direto para o Apto $proximoApto?", textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
-        actionsAlignment: MainAxisAlignment.center,
+        content: Text("Deseja ir para o Apto $proximoApto?"),
         actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              setState(() => _unidadeSelecionada = null); 
-            }, 
-            child: const Text("VOLTAR PARA LISTA", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))
-          ),
+          TextButton(onPressed: () { Navigator.pop(ctx); setState(() => _unidadeSelecionada = null); }, child: const Text("LISTA")),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
-            onPressed: () {
-              Navigator.pop(ctx);
-              // Pequeno delay para garantir que o estado resete e não trave a navegação
+            onPressed: () { 
+              Navigator.pop(ctx); 
               Future.delayed(const Duration(milliseconds: 100), () {
                 if(mounted) setState(() => _unidadeSelecionada = proximoApto); 
               });
             },
-            child: const Text("IR PARA O PRÓXIMO", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: const Text("PRÓXIMO"),
           )
         ]
       )
@@ -182,28 +176,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _voltarNivel() {
     setState(() {
-      if (_unidadeSelecionada != null) {
-        _unidadeSelecionada = null; 
-      } else if (_andarSelecionado != null) {
-        _andarSelecionado = null; 
-      } else if (_blocoSelecionado != null) {
-        _blocoSelecionado = null; 
-      } else if (_condominioSelecionado) {
-        _condominioSelecionado = false; 
-      }
+      if (_unidadeSelecionada != null) _unidadeSelecionada = null; 
+      else if (_andarSelecionado != null) _andarSelecionado = null; 
+      else if (_blocoSelecionado != null) _blocoSelecionado = null; 
+      else if (_condominioSelecionado) _condominioSelecionado = false; 
     });
   }
 
   String _formatarAndar(String andarRaw) {
     String limpo = andarRaw.trim();
-    if (limpo.toLowerCase() == 'térreo' || limpo.toLowerCase() == 'terreo') return 'Térreo';
-    int? numero = int.tryParse(limpo);
+    if (limpo.toLowerCase().contains('térreo') || limpo.toLowerCase().contains('terreo')) return 'Térreo';
+    int? numero = int.tryParse(limpo.replaceAll(RegExp(r'[^0-9]'), ''));
     if (numero != null) return "${numero}º Andar";
     return limpo.toUpperCase();
   }
 
   Widget _buildListaCondominios() {
-    // Agora o nome do condomínio vem direto dos dados carregados
     String nomeCondominio = "CONDOMÍNIO";
     if (_todasUnidades.isNotEmpty && _todasUnidades.first['condominio_nome'] != null) {
       nomeCondominio = _todasUnidades.first['condominio_nome'].toString().toUpperCase();
@@ -217,9 +205,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: ListTile(
             contentPadding: const EdgeInsets.all(20),
             leading: Icon(Icons.location_city, color: Colors.blue[900], size: 45),
-            title: Text(nomeCondominio, style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 20)),
-            subtitle: const Text("Toque para acessar os blocos e torres", style: TextStyle(color: Colors.grey)),
-            trailing: const Icon(Icons.chevron_right, color: Colors.grey, size: 30),
+            title: Text(nomeCondominio, style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 18)),
+            subtitle: const Text("Toque para ver os blocos"),
+            trailing: const Icon(Icons.chevron_right),
             onTap: () => setState(() => _condominioSelecionado = true),
           ),
         )
@@ -234,9 +222,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return Card(
           color: Colors.white, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           child: ListTile(
-            leading: Icon(Icons.apartment, color: Colors.blue[900], size: 30),
-            title: Text(_blocos[i], style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 18)),
-            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+            leading: Icon(Icons.apartment, color: Colors.blue[900]),
+            title: Text(_blocos[i], style: const TextStyle(fontWeight: FontWeight.bold)),
+            trailing: const Icon(Icons.chevron_right),
             onTap: () => setState(() => _blocoSelecionado = _blocos[i]),
           ),
         );
@@ -249,14 +237,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final andaresUnicos = unidadesDoBloco.map((u) => u['andar']?.toString() ?? 'Térreo').toSet().toList();
     
     andaresUnicos.sort((a, b) {
-      int extrairNumero(String andar) {
-        String limpo = andar.toLowerCase();
-        if (limpo.contains('térreo') || limpo.contains('terreo')) return 0; 
-        final regex = RegExp(r'\d+');
-        final match = regex.firstMatch(andar);
-        return match != null ? int.parse(match.group(0)!) : 999; 
-      }
-      return extrairNumero(a).compareTo(extrairNumero(b));
+      int extrairNum(String s) => int.tryParse(s.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+      return extrairNum(a).compareTo(extraNum(b));
     });
 
     return ListView.builder(
@@ -264,15 +246,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       itemBuilder: (ctx, i) {
         final andar = andaresUnicos[i];
         final qtd = unidadesDoBloco.where((u) => (u['andar'] ?? 'Térreo') == andar).length;
-        final andarExibicao = _formatarAndar(andar);
-
         return Card(
           color: Colors.white, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           child: ListTile(
-            leading: Icon(Icons.layers, color: Colors.orange[800], size: 30),
-            title: Text(andarExibicao, style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 16)),
-            subtitle: Text("$qtd medidores neste piso", style: const TextStyle(color: Colors.grey)),
-            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+            leading: Icon(Icons.layers, color: Colors.orange[800]),
+            title: Text(_formatarAndar(andar), style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text("$qtd medidores"),
             onTap: () => setState(() => _andarSelecionado = andar),
           ),
         );
@@ -284,7 +263,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final relogiosDoAndar = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado
     ).toList();
-
     final aptosUnicos = relogiosDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
     aptosUnicos.sort((a, b) => a.compareTo(b));
 
@@ -295,22 +273,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final relogiosDesteApto = relogiosDoAndar.where((r) => r['identificacao'].toString() == apto).toList();
         final qtdLidos = relogiosDesteApto.where((r) => r['valor_lido'] != null || r['status_cor'] == 'amarelo').length;
         final total = relogiosDesteApto.length;
-
-        Color corStatus = Colors.red;
-        if (qtdLidos == total) corStatus = Colors.green;
-        else if (qtdLidos > 0) corStatus = Colors.amber;
+        Color corStatus = qtdLidos == total ? Colors.green : (qtdLidos > 0 ? Colors.amber : Colors.red);
 
         return Card(
           color: Colors.white, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           child: ListTile(
-            leading: Container(
-              width: 40, height: 40,
-              decoration: BoxDecoration(color: corStatus.withOpacity(0.2), shape: BoxShape.circle),
-              child: Icon(Icons.meeting_room, color: corStatus),
-            ),
-            title: Text("Apto $apto", style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 18)),
-            subtitle: Text("$qtdLidos de $total relógios lidos", style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+            leading: Icon(Icons.meeting_room, color: corStatus),
+            title: Text("Apto $apto", style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text("$qtdLidos de $total concluídos"),
             onTap: () => setState(() => _unidadeSelecionada = apto),
           ),
         );
@@ -320,62 +290,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildListaRelogiosDoApto() {
     final relogios = _todasUnidades.where((u) => 
-      u['bloco_nome'] == _blocoSelecionado && 
-      (u['andar'] ?? 'Térreo') == _andarSelecionado &&
-      u['identificacao'].toString() == _unidadeSelecionada
+      u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado && u['identificacao'].toString() == _unidadeSelecionada
     ).toList();
 
     return ListView.builder(
       itemCount: relogios.length,
       itemBuilder: (ctx, i) {
         final item = relogios[i];
-        
-        Color corBolinha = Colors.red;
-        if (item['status_cor'] == 'verde' || item['valor_lido'] != null) corBolinha = Colors.green;
-        if (item['status_cor'] == 'amarelo') corBolinha = Colors.amber;
-
-        String tipo = item['tipo_medidor']?.toString().toUpperCase() ?? 'MEDIDOR';
-        IconData icone = Icons.speed;
-        if (tipo.contains('FRIO') || tipo.contains('FRIA')) icone = Icons.water_drop;
-        if (tipo.contains('QUENTE')) icone = Icons.local_fire_department;
-        if (tipo.contains('GÁS') || tipo.contains('GAS')) icone = Icons.propane;
-
-        int casasDecimais = item['digitos_vermelhos'] ?? 3; 
-
-        String valorExibicao = 'Aguardando foto';
-        if (item['valor_lido'] != null) {
-          double? valParsed = double.tryParse(item['valor_lido'].toString());
-          if (valParsed != null) {
-            valorExibicao = 'Valor: ${valParsed.toStringAsFixed(casasDecimais).replaceAll('.', ',')}';
-          } else {
-            valorExibicao = 'Valor: ${item['valor_lido'].toString().replaceAll('.', ',')}';
-          }
-        }
+        Color cor = (item['valor_lido'] != null || item['status_cor'] == 'verde') ? Colors.green : (item['status_cor'] == 'amarelo' ? Colors.amber : Colors.red);
+        String valor = item['valor_lido'] != null ? "Valor: ${item['valor_lido'].toString().replaceAll('.', ',')}" : "Pendente";
 
         return Card(
           color: Colors.white, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           child: ListTile(
-            leading: Icon(icone, color: corBolinha, size: 35),
-            title: Text(tipo, style: TextStyle(color: Colors.blue[900], fontWeight: FontWeight.bold, fontSize: 16)),
-            subtitle: Text(valorExibicao, style: const TextStyle(color: Colors.grey)),
-            trailing: Icon(Icons.camera_alt, color: Colors.blue[900]),
+            leading: Icon(Icons.speed, color: cor),
+            title: Text(item['tipo_medidor'].toString().toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(valor),
+            trailing: const Icon(Icons.camera_alt),
             onTap: () {
               Map medidorData = {
                 'id': item['medidor_id'],
-                'tipo_medidor': tipo,
+                'tipo_medidor': item['tipo_medidor'],
                 'leitura_anterior': item['leitura_anterior'] ?? '0.0',
-                'digitos_vermelhos': casasDecimais 
+                'digitos_vermelhos': item['digitos_vermelhos'] ?? 3
               };
               item['tenant_id'] = widget.user['tenant_id'];
-
-              Navigator.push(
-                context, 
-                MaterialPageRoute(builder: (context) => LeituraScreen(unidade: item, medidor: medidorData))
-              ).then((_) {
-                 // Reseta estado para evitar o bug do "congelamento" ao voltar
-                 if(mounted) {
-                   _carregarDados(checarProximo: true);
-                 }
+              Navigator.push(context, MaterialPageRoute(builder: (context) => LeituraScreen(unidade: item, medidor: medidorData))).then((_) {
+                 if(mounted) _carregarDados(checarProximo: true);
               });
             },
           ),
@@ -386,44 +327,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    String tituloApp = "CondoLogic";
-    if (_condominioSelecionado) tituloApp = "Blocos / Torres";
-    if (_blocoSelecionado != null) tituloApp = _blocoSelecionado!;
-    if (_andarSelecionado != null) tituloApp = "$_blocoSelecionado - ${_formatarAndar(_andarSelecionado!)}";
-    if (_unidadeSelecionada != null) tituloApp = "Apto $_unidadeSelecionada";
-
-    bool mostrarBotaoVoltar = _condominioSelecionado || _blocoSelecionado != null;
+    String titulo = "CondoLogic";
+    if (_unidadeSelecionada != null) titulo = "Apto $_unidadeSelecionada";
+    else if (_andarSelecionado != null) titulo = "$_blocoSelecionado - ${_formatarAndar(_andarSelecionado!)}";
+    else if (_blocoSelecionado != null) titulo = _blocoSelecionado!;
+    else if (_condominioSelecionado) titulo = "Blocos";
 
     return Scaffold(
       backgroundColor: Colors.blue[50],
       appBar: AppBar(
-        title: Text(tituloApp, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+        title: Text(titulo, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
         backgroundColor: Colors.blue[900],
         iconTheme: const IconThemeData(color: Colors.white),
-        leading: mostrarBotaoVoltar ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _voltarNivel) : null,
+        leading: (_condominioSelecionado) ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _voltarNivel) : null,
         actions: [
-          // BOTÃO SAIR
-          IconButton(
-            icon: const Icon(Icons.exit_to_app, color: Colors.redAccent),
-            tooltip: "Sair do Sistema",
-            onPressed: _fazerLogout,
-          )
+          IconButton(icon: const Icon(Icons.exit_to_app, color: Colors.redAccent), onPressed: _fazerLogout)
         ],
       ),
       body: isLoading 
-        ? Center(child: CircularProgressIndicator(color: Colors.blue[900]))
+        ? const Center(child: CircularProgressIndicator())
         : RefreshIndicator(
             onRefresh: () => _carregarDados(),
-            color: Colors.blue[900],
-            child: _unidadeSelecionada != null
-              ? _buildListaRelogiosDoApto()
-              : _andarSelecionado != null
-                  ? _buildListaApartamentos()
-                : _blocoSelecionado != null
-                  ? _buildListaAndares()
-                  : _condominioSelecionado
-                    ? _buildListaBlocos()
-                    : _buildListaCondominios()
+            child: _unidadeSelecionada != null ? _buildListaRelogiosDoApto() : (_andarSelecionado != null ? _buildListaApartamentos() : (_blocoSelecionado != null ? _buildListaAndares() : (_condominioSelecionado ? _buildListaBlocos() : _buildListaCondominios())))
           ),
     );
   }
