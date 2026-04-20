@@ -6,7 +6,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'leitura_screen.dart';
 import 'login_screen.dart';
 import 'selecao_condominio_screen.dart';
-import 'unidades_screen.dart';
 import '../services/api_service.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -39,9 +38,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Timer para forçar sync a cada 60s
     _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) => _sincronizarAutomaticamente());
     
-    // =============================================================
     // AUTO-SYNC: Escuta a volta da internet em tempo real
-    // =============================================================
     _subscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
       if (results.isNotEmpty && !results.contains(ConnectivityResult.none)) {
         _sincronizarAutomaticamente();
@@ -236,9 +233,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final unidadesDoBloco = _todasUnidades.where((u) => u['bloco_nome'] == _blocoSelecionado).toList();
     final andaresUnicos = unidadesDoBloco.map((u) => u['andar']?.toString() ?? 'Térreo').toSet().toList();
     
+    // CORRIGIDO: Erro de digitação no extrairNum
     andaresUnicos.sort((a, b) {
       int extrairNum(String s) => int.tryParse(s.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
-      return extrairNum(a).compareTo(extraNum(b));
+      return extrairNum(a).compareTo(extrairNum(b));
     });
 
     return ListView.builder(
