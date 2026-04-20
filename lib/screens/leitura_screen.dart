@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
+import 'package:connectivity_plus/connectivity_plus.dart'; // <-- IMPORTANTE (NOVO)
 import 'camera_screen.dart';
 import '../services/api_service.dart';
 import '../database_helper.dart'; 
@@ -37,6 +38,23 @@ class _LeituraScreenState extends State<LeituraScreen> {
   Future<void> _processarIA(String path) async {
     setState(() => _isProcessing = true);
     try {
+      // ========================================================
+      // NOVO: FAIL-FAST (CORTA IMEDIATAMENTE SE ESTIVER OFFLINE)
+      // ========================================================
+      var connectivityResult = await (Connectivity().checkConnectivity());
+      if (connectivityResult.contains(ConnectivityResult.none)) {
+        _mostrarErro("Sem internet. Movendo para a fila rapidamente!");
+        
+        // Comprime rápido para salvar offline
+        final bytes = await File(path).readAsBytes();
+        img.Image? originalImage = img.decodeImage(bytes);
+        img.Image resizedImage = img.copyResize(originalImage!, width: 800);
+        String base64Image = base64Encode(img.encodeJpg(resizedImage, quality: 80));
+        
+        await _guardarOffline(base64Image, path, 0.0);
+        return; // Mata a função aqui na hora!
+      }
+
       final bytes = await File(path).readAsBytes();
       img.Image? originalImage = img.decodeImage(bytes);
       if (originalImage == null) throw Exception("Falha ao decodificar imagem");
@@ -55,7 +73,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(envio),
-        ).timeout(const Duration(seconds: 40));
+        ).timeout(const Duration(seconds: 15)); // <-- TIMEOUT REDUZIDO PARA 15s
 
         if (response.statusCode == 200) {
           var data = jsonDecode(response.body);
@@ -64,13 +82,11 @@ class _LeituraScreenState extends State<LeituraScreen> {
         } else {
           _mostrarErro("Erro na IA: Código ${response.statusCode}");
         }
-      } on SocketException catch (e) {
-        _mostrarErro("Sem internet. Guardando para ler e salvar depois...");
-        await Future.delayed(const Duration(seconds: 2));
+      } on SocketException catch (_) {
+        _mostrarErro("Sinal cortado. Guardando para ler depois...");
         await _guardarOffline(base64Image, path, 0.0);
       } on TimeoutException catch (_) {
-        _mostrarErro("Sinal fraco. Guardando para ler e salvar depois...");
-        await Future.delayed(const Duration(seconds: 2));
+        _mostrarErro("Sinal fraco (Timeout). Guardando na fila...");
         await _guardarOffline(base64Image, path, 0.0);
       } catch (e) {
         _mostrarErro("Erro de rede: $e");
@@ -152,6 +168,16 @@ class _LeituraScreenState extends State<LeituraScreen> {
 
   // ETAPA 3: ROTA DE SALVAMENTO NO BANCO
   Future<bool> _salvarDefinitivo(double valorFinal, String base64Image, String path) async {
+    // ========================================================
+    // NOVO: FAIL-FAST ANTES DE SALVAR O VALOR DIGITADO
+    // ========================================================
+    var connectivityResult = await (Connectivity().checkConnectivity());
+    if (connectivityResult.contains(ConnectivityResult.none)) {
+      _mostrarErro("Ficou Offline. Guardando o valor digitado na fila...");
+      await _guardarOffline(base64Image, path, valorFinal); // Salva o valor confirmado!
+      return true;
+    }
+
     Map envio = {
       'valor_lido': valorFinal,
       'image': base64Image,
@@ -165,7 +191,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
         Uri.parse('$_baseUrl/api/leitura/salvar'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(envio),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(const Duration(seconds: 15)); // <-- TIMEOUT REDUZIDO
 
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Leitura salva com sucesso!"), backgroundColor: Colors.green));
@@ -175,9 +201,8 @@ class _LeituraScreenState extends State<LeituraScreen> {
         return false;
       }
     } on SocketException catch (_) {
-      _mostrarErro("Ficou Offline. Guardando o valor digitado na fila...");
-      await Future.delayed(const Duration(seconds: 2));
-      await _guardarOffline(base64Image, path, valorFinal); // Salva o valor confirmado!
+      _mostrarErro("Ficou Offline no envio. Guardando valor...");
+      await _guardarOffline(base64Image, path, valorFinal);
       return true;
     } catch (e) {
       _mostrarErro("Erro de rede ao salvar.");
@@ -205,7 +230,16 @@ class _LeituraScreenState extends State<LeituraScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         title: Row(children: [Icon(Icons.wifi_off, color: Colors.orange[800]), const SizedBox(width: 10), const Text("Fila de Envio")]),
         content: const Text("Salvo no celular! Será enviado automaticamente quando recuperar a internet."),
-        actions: [ElevatedButton(onPressed: () { Navigator.pop(context); Navigator.pop(context, true); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800]), child: const Text("OK", style: TextStyle(color: Colors.white)))]
+        actions: [
+          ElevatedButton(
+            onPressed: () { 
+              Navigator.pop(context); 
+              Navigator.pop(context, true); 
+            }, 
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800]), 
+            child: const Text("OK", style: TextStyle(color: Colors.white))
+          )
+        ]
       ),
     );
   }

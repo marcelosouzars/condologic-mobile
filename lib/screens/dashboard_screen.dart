@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:http/http.dart' as http;
+import 'package:connectivity_plus/connectivity_plus.dart'; // <--- IMPORTANTE
 import 'leitura_screen.dart';
 import '../services/api_service.dart';
 
@@ -19,23 +20,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
   
   bool _condominioSelecionado = false; 
   String? _blocoSelecionado;
-  String? _andarSelecionado;           
-  String? _unidadeSelecionada;         
+  String? _andarSelecionado;          
+  String? _unidadeSelecionada;        
 
   bool isLoading = true;
   String baseUrl = "https://condologic-backend.onrender.com";
   Timer? _syncTimer;
+  late StreamSubscription<List<ConnectivityResult>> _subscription; // <--- NOVO ESPIÃO DE REDE
 
   @override
   void initState() {
     super.initState();
     _carregarDados();
     _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) => _sincronizarAutomaticamente());
+    
+    // <--- NOVO: Quando a rede volta, dispara a sincronização imediatamente!
+    _subscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      if (results.isNotEmpty && !results.contains(ConnectivityResult.none)) {
+        _sincronizarAutomaticamente();
+      }
+    });
   }
 
   @override
   void dispose() {
     _syncTimer?.cancel(); 
+    _subscription.cancel(); // <--- NOVO
     super.dispose();
   }
 
@@ -313,9 +323,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (tipo.contains('QUENTE')) icone = Icons.local_fire_department;
         if (tipo.contains('GÁS') || tipo.contains('GAS')) icone = Icons.propane;
 
-        // =========================================================
-        // MÁGICA DINÂMICA: Exibir as casas decimais corretas
-        // =========================================================
         int casasDecimais = item['digitos_vermelhos'] ?? 3; 
 
         String valorExibicao = 'Aguardando foto';
