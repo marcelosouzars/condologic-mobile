@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'package:http/http.dart' as http;
-import 'package:connectivity_plus/connectivity_plus.dart'; // <--- IMPORTANTE
+import 'package:shared_preferences/shared_preferences.dart'; // <--- IMPORTANTE PARA O LOGOUT
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'login_screen.dart'; // <--- IMPORTANTE PARA VOLTAR AO LOGIN
 import 'leitura_screen.dart';
 import '../services/api_service.dart';
 
@@ -26,7 +27,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool isLoading = true;
   String baseUrl = "https://condologic-backend.onrender.com";
   Timer? _syncTimer;
-  late StreamSubscription<List<ConnectivityResult>> _subscription; // <--- NOVO ESPIÃO DE REDE
+  late StreamSubscription<List<ConnectivityResult>> _subscription;
 
   @override
   void initState() {
@@ -34,7 +35,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _carregarDados();
     _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) => _sincronizarAutomaticamente());
     
-    // <--- NOVO: Quando a rede volta, dispara a sincronização imediatamente!
     _subscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
       if (results.isNotEmpty && !results.contains(ConnectivityResult.none)) {
         _sincronizarAutomaticamente();
@@ -45,13 +45,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _syncTimer?.cancel(); 
-    _subscription.cancel(); // <--- NOVO
+    _subscription.cancel(); 
     super.dispose();
+  }
+
+  // ==========================================
+  // FUNÇÃO DE LOGOUT SEGURO
+  // ==========================================
+  Future<void> _fazerLogout() async {
+    int pendentes = await ApiService().dbHelper.contarPendentes();
+    
+    if (pendentes > 0) {
+      // Bloqueia o logout se tiver foto na fila!
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(children: [Icon(Icons.warning, color: Colors.red), SizedBox(width: 10), Text("Atenção!")]),
+          content: Text("Você tem $pendentes foto(s) na fila aguardando internet. Conecte-se à internet e aguarde o envio antes de sair para não perder os dados."),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ENTENDIDO", style: TextStyle(color: Colors.blue)))
+          ],
+        )
+      );
+    } else {
+      // Limpa a memória e volta pro Login
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context, 
+          MaterialPageRoute(builder: (context) => LoginScreen()), 
+          (Route<dynamic> route) => false
+        );
+      }
+    }
   }
 
   Future<void> _carregarDados({bool checarProximo = false}) async {
     setState(() => isLoading = true);
-
     try {
       final dados = await ApiService().getUnidades(widget.user['tenant_id']);
       final blocosUnicos = dados.map((u) => u['bloco_nome'].toString()).toSet().toList();
@@ -77,16 +108,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _sincronizarAutomaticamente() async {
     try {
       int quantidadeEnviada = await ApiService().sincronizarPendenciasOffline(widget.user['tenant_id']);
-
       if (quantidadeEnviada > 0 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("🔄 Auto-Sync: $quantidadeEnviada foto(s) enviada(s)!"), backgroundColor: Colors.green)
         );
         _carregarDados(); 
       }
-    } catch (e) {
-      // Falha silenciosa
-    }
+    } catch (e) {}
   }
 
   void _verificarConclusaoUnidade() {
@@ -100,7 +128,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (todosLidos) {
       final todasAsUnidadesDoAndar = _todasUnidades.where((u) => u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado).toList();
-
       final aptosUnicos = todasAsUnidadesDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
       aptosUnicos.sort((a, b) => a.compareTo(b)); 
 
@@ -122,14 +149,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Column(
-          children: [
+        title: const Column(children: [
             Icon(Icons.check_circle, color: Colors.green, size: 60),
             SizedBox(height: 10),
             Text("Unidade Concluída!", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-          ]
-        ),
-        content: Text("Todas as medições deste apartamento foram feitas.\n\nDeseja ir direto para o Apto $proximoApto?", textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
+        ]),
+        content: Text("Deseja ir direto para o Apto $proximoApto?", textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
         actionsAlignment: MainAxisAlignment.center,
         actions: [
           TextButton(
@@ -140,10 +165,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: const Text("VOLTAR PARA LISTA", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900], padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
             onPressed: () {
               Navigator.pop(ctx);
-              setState(() => _unidadeSelecionada = proximoApto); 
+              // Pequeno delay para garantir que o estado resete e não trave a navegação
+              Future.delayed(const Duration(milliseconds: 100), () {
+                if(mounted) setState(() => _unidadeSelecionada = proximoApto); 
+              });
             },
             child: const Text("IR PARA O PRÓXIMO", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           )
@@ -168,23 +196,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String _formatarAndar(String andarRaw) {
     String limpo = andarRaw.trim();
-
-    if (limpo.toLowerCase() == 'térreo' || limpo.toLowerCase() == 'terreo') {
-      return 'Térreo';
-    }
+    if (limpo.toLowerCase() == 'térreo' || limpo.toLowerCase() == 'terreo') return 'Térreo';
     int? numero = int.tryParse(limpo);
-    if (numero != null) {
-      return "${numero}º Andar";
-    }
+    if (numero != null) return "${numero}º Andar";
     return limpo.toUpperCase();
   }
 
   Widget _buildListaCondominios() {
-    String nomeCondominio = "CONDOMÍNIO VINCULADO";
-
-    if (widget.user['tenant_nome'] != null) {
-      nomeCondominio = widget.user['tenant_nome'].toString().toUpperCase();
-    } else if (_todasUnidades.isNotEmpty && _todasUnidades.first['condominio_nome'] != null) {
+    // Agora o nome do condomínio vem direto dos dados carregados
+    String nomeCondominio = "CONDOMÍNIO";
+    if (_todasUnidades.isNotEmpty && _todasUnidades.first['condominio_nome'] != null) {
       nomeCondominio = _todasUnidades.first['condominio_nome'].toString().toUpperCase();
     }
 
@@ -243,7 +264,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       itemBuilder: (ctx, i) {
         final andar = andaresUnicos[i];
         final qtd = unidadesDoBloco.where((u) => (u['andar'] ?? 'Térreo') == andar).length;
-
         final andarExibicao = _formatarAndar(andar);
 
         return Card(
@@ -272,13 +292,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       itemCount: aptosUnicos.length,
       itemBuilder: (ctx, i) {
         final apto = aptosUnicos[i];
-        
         final relogiosDesteApto = relogiosDoAndar.where((r) => r['identificacao'].toString() == apto).toList();
         final qtdLidos = relogiosDesteApto.where((r) => r['valor_lido'] != null || r['status_cor'] == 'amarelo').length;
         final total = relogiosDesteApto.length;
 
         Color corStatus = Colors.red;
-        
         if (qtdLidos == total) corStatus = Colors.green;
         else if (qtdLidos > 0) corStatus = Colors.amber;
 
@@ -317,7 +335,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (item['status_cor'] == 'amarelo') corBolinha = Colors.amber;
 
         String tipo = item['tipo_medidor']?.toString().toUpperCase() ?? 'MEDIDOR';
-        
         IconData icone = Icons.speed;
         if (tipo.contains('FRIO') || tipo.contains('FRIA')) icone = Icons.water_drop;
         if (tipo.contains('QUENTE')) icone = Icons.local_fire_department;
@@ -349,13 +366,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 'leitura_anterior': item['leitura_anterior'] ?? '0.0',
                 'digitos_vermelhos': casasDecimais 
               };
-
               item['tenant_id'] = widget.user['tenant_id'];
 
               Navigator.push(
                 context, 
                 MaterialPageRoute(builder: (context) => LeituraScreen(unidade: item, medidor: medidorData))
-              ).then((_) => _carregarDados(checarProximo: true));
+              ).then((_) {
+                 // Reseta estado para evitar o bug do "congelamento" ao voltar
+                 if(mounted) {
+                   _carregarDados(checarProximo: true);
+                 }
+              });
             },
           ),
         );
@@ -366,7 +387,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     String tituloApp = "CondoLogic";
-
     if (_condominioSelecionado) tituloApp = "Blocos / Torres";
     if (_blocoSelecionado != null) tituloApp = _blocoSelecionado!;
     if (_andarSelecionado != null) tituloApp = "$_blocoSelecionado - ${_formatarAndar(_andarSelecionado!)}";
@@ -381,6 +401,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         backgroundColor: Colors.blue[900],
         iconTheme: const IconThemeData(color: Colors.white),
         leading: mostrarBotaoVoltar ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _voltarNivel) : null,
+        actions: [
+          // BOTÃO SAIR
+          IconButton(
+            icon: const Icon(Icons.exit_to_app, color: Colors.redAccent),
+            tooltip: "Sair do Sistema",
+            onPressed: _fazerLogout,
+          )
+        ],
       ),
       body: isLoading 
         ? Center(child: CircularProgressIndicator(color: Colors.blue[900]))
