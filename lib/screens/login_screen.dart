@@ -1,3 +1,5 @@
+// meu login_screen.dart:
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -23,6 +25,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _verificarSessaoAtiva() async {
+    // Comentamos o redirecionamento automático para forçar o usuário a apertar "Entrar" e validar a rede.
+    /*
     final prefs = await SharedPreferences.getInstance();
     final userDataString = prefs.getString('user_session');
     if (userDataString != null) {
@@ -32,6 +36,7 @@ class _LoginScreenState extends State<LoginScreen> {
         MaterialPageRoute(builder: (context) => DashboardScreen(user: userData)),
       );
     }
+    */
   }
 
   // =======================================================
@@ -44,7 +49,6 @@ class _LoginScreenState extends State<LoginScreen> {
       final response = await http.get(
         Uri.parse("https://condologic-backend.onrender.com")
       ).timeout(const Duration(seconds: 15));
-      
       _mostrarSucesso("CONEXÃO EXCELENTE!\nO servidor respondeu com sucesso.\nSua internet está liberada para o app.");
     } on SocketException catch (e) {
       _mostrarErroGrave("FALHA CRÍTICA DE INTERNET (SocketException):\n${e.message}\nVerifique se o app tem permissão de dados.");
@@ -73,7 +77,7 @@ class _LoginScreenState extends State<LoginScreen> {
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"cpf": cpf, "senha": senha}),
       ).timeout(const Duration(seconds: 40));
-
+      
       if (response.statusCode == 200) {
         final userData = jsonDecode(response.body);
         final prefs = await SharedPreferences.getInstance();
