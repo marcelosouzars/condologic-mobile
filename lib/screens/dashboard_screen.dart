@@ -1,10 +1,9 @@
-// ==========================================>>> dashboard_screen.dart (MOBILE)
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'package:shared_preferences/shared_preferences.dart'; // <--- IMPORTANTE PARA O LOGOUT
+import 'package:shared_preferences/shared_preferences.dart'; 
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'login_screen.dart'; // <--- IMPORTANTE PARA VOLTAR AO LOGIN
+import 'login_screen.dart'; 
 import 'leitura_screen.dart';
 import '../services/api_service.dart';
 
@@ -26,7 +25,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _unidadeSelecionada;        
 
   bool isLoading = true;
-  String baseUrl = "https://condologic-backend.onrender.com";
   Timer? _syncTimer;
   late StreamSubscription<List<ConnectivityResult>> _subscription;
 
@@ -36,7 +34,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _carregarDados();
     _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) => _sincronizarAutomaticamente());
     
-    // AUTO-SYNC
     _subscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
       if (results.isNotEmpty && !results.contains(ConnectivityResult.none)) {
         _sincronizarAutomaticamente();
@@ -51,9 +48,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // ==========================================
-  // FUNÇÃO DE LOGOUT SEGURO
-  // ==========================================
   Future<void> _fazerLogout() async {
     final listaPendentes = await ApiService().dbHelper.buscarPendentes();
     int pendentes = listaPendentes.length;
@@ -82,11 +76,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  // MÁGICA 1: Carrega instantaneamente do banco local! Zero atrasos no corredor.
   Future<void> _carregarDados({bool checarProximo = false}) async {
     setState(() => isLoading = true);
-
     try {
-      final dados = await ApiService().getUnidades(widget.user['tenant_id']);
+      final dados = await ApiService().getUnidadesLocais();
       final blocosUnicos = dados.map((u) => u['bloco_nome'].toString()).toSet().toList();
       blocosUnicos.sort();
 
@@ -103,14 +97,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     } catch (e) {
       if (mounted) setState(() => isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Modo Offline ativado.")));
+    }
+  }
+
+  // MÁGICA 2: Função que o zelador chama na portaria para baixar o prédio.
+  Future<void> _baixarCargaDoPredio() async {
+    setState(() => isLoading = true);
+    bool sucesso = await ApiService().baixarCargaDoServidor(widget.user['tenant_id']);
+    if (sucesso) {
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Prédio atualizado com sucesso! Pronto para modo offline."), backgroundColor: Colors.green));
+      await _carregarDados();
+    } else {
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Erro ao baixar dados. Verifique a internet."), backgroundColor: Colors.red));
+      setState(() => isLoading = false);
     }
   }
 
   Future<void> _sincronizarAutomaticamente() async {
     try {
       int quantidadeEnviada = await ApiService().sincronizarPendenciasOffline(widget.user['tenant_id']);
-
       if (quantidadeEnviada > 0 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("🔄 Auto-Sync: $quantidadeEnviada foto(s) enviada(s)!"), backgroundColor: Colors.green)
@@ -203,7 +208,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String _formatarAndar(String andarRaw) {
     String limpo = andarRaw.trim();
-
     if (limpo.toLowerCase() == 'térreo' || limpo.toLowerCase() == 'terreo') {
       return 'Térreo';
     }
@@ -216,11 +220,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildListaCondominios() {
     String nomeCondominio = widget.user['tenant_nome'] ?? "CONDOMÍNIO VINCULADO";
-
     if (_todasUnidades.isNotEmpty && _todasUnidades.first['condominio_nome'] != null) {
       nomeCondominio = _todasUnidades.first['condominio_nome'].toString().toUpperCase();
     }
-
     return ListView(
       padding: const EdgeInsets.all(10),
       children: [
@@ -278,7 +280,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       itemBuilder: (ctx, i) {
         final andar = andaresUnicos[i];
         final qtd = unidadesDoBloco.where((u) => (u['andar'] ?? 'Térreo') == andar).length;
-
         final andarExibicao = _formatarAndar(andar);
 
         return Card(
@@ -307,13 +308,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       itemCount: aptosUnicos.length,
       itemBuilder: (ctx, i) {
         final apto = aptosUnicos[i];
-        
         final relogiosDesteApto = relogiosDoAndar.where((r) => r['identificacao'].toString() == apto).toList();
         final qtdLidos = relogiosDesteApto.where((r) => r['valor_lido'] != null || r['status_cor'] == 'amarelo').length;
         final total = relogiosDesteApto.length;
 
         Color corStatus = Colors.red;
-        
         if (qtdLidos == total) corStatus = Colors.green;
         else if (qtdLidos > 0) corStatus = Colors.amber;
 
@@ -403,7 +402,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     String tituloApp = "CondoLogic";
-
     String blocoFormatado = _blocoSelecionado ?? "";
     if (!blocoFormatado.toLowerCase().contains("bloco") && blocoFormatado.isNotEmpty) {
       blocoFormatado = "Bloco $blocoFormatado";
@@ -424,7 +422,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         iconTheme: const IconThemeData(color: Colors.white),
         leading: mostrarBotaoVoltar ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _voltarNivel) : null,
         actions: [
-          // BOTÃO SAIR CORRIGIDO
+          // BOTÃO NOVO DE SINCRONIZAR!
+          IconButton(
+            icon: const Icon(Icons.cloud_download, color: Colors.greenAccent),
+            tooltip: "Baixar Carga do Prédio",
+            onPressed: _baixarCargaDoPredio,
+          ),
           IconButton(
             icon: const Icon(Icons.exit_to_app, color: Colors.redAccent),
             tooltip: "Sair do Sistema",
@@ -435,7 +438,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       body: isLoading 
         ? Center(child: CircularProgressIndicator(color: Colors.blue[900]))
         : RefreshIndicator(
-            onRefresh: () => _carregarDados(),
+            onRefresh: () => _baixarCargaDoPredio(), // Agora o refresh puxa do servidor!
             color: Colors.blue[900],
             child: _unidadeSelecionada != null
               ? _buildListaRelogiosDoApto()
