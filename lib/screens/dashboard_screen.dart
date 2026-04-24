@@ -1,16 +1,18 @@
+// ==========================================>>> dashboard_screen.dart (MOBILE)
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'package:shared_preferences/shared_preferences.dart'; 
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'login_screen.dart'; 
+import 'login_screen.dart';
 import 'leitura_screen.dart';
 import '../services/api_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   final Map user;
   const DashboardScreen({super.key, required this.user});
-  
+
   @override
   _DashboardScreenState createState() => _DashboardScreenState();
 }
@@ -18,20 +20,26 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> _todasUnidades = [];
   List<String> _blocos = [];
-  
-  bool _condominioSelecionado = false; 
-  String? _blocoSelecionado;
-  String? _andarSelecionado;          
-  String? _unidadeSelecionada;        
 
+  bool _condominioSelecionado = false;
+  String? _blocoSelecionado;
+  String? _andarSelecionado;
+  String? _unidadeSelecionada;
+  
   bool isLoading = true;
   Timer? _syncTimer;
   late StreamSubscription<List<ConnectivityResult>> _subscription;
+  
+  String _nomeCondominioCachado = "";
 
   @override
   void initState() {
     super.initState();
-    _carregarDados();
+    _buscarNomeCondominioPorTenant(); 
+    _carregarDados().then((_) {
+      _verificarCargaInicialAutomatica();
+    });
+
     _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) => _sincronizarAutomaticamente());
     
     _subscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
@@ -43,15 +51,64 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
-    _syncTimer?.cancel(); 
-    _subscription.cancel(); 
+    _syncTimer?.cancel();
+    _subscription.cancel();
     super.dispose();
+  }
+
+  // ==============================================================
+  // BUSCA O NOME REAL NA TABELA 'tenants' E SALVA NO CELULAR
+  // ==============================================================
+  Future<void> _buscarNomeCondominioPorTenant() async {
+    int tenantId = widget.user['tenant_id'] ?? 1;
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    
+    // 1. Tenta carregar do cache primeiro
+    String? cache = prefs.getString('tenant_nome_$tenantId');
+    if (cache != null && cache.isNotEmpty) {
+      if (mounted) setState(() => _nomeCondominioCachado = cache);
+    }
+
+    // 2. Busca na API silenciosamente
+    try {
+      var conectividade = await Connectivity().checkConnectivity();
+      if (!conectividade.contains(ConnectivityResult.none)) {
+        final baseUrl = "https://condologic-backend.onrender.com";
+        // Bate na rota para pegar a coluna "nome" da tabela "tenants"
+        final response = await http.get(Uri.parse('$baseUrl/api/admin/tenant/$tenantId')).timeout(const Duration(seconds: 5));
+        
+        if (response.statusCode == 200) {
+          var data = jsonDecode(response.body);
+          String nomeReal = data['nome'] ?? ''; // Pega exatamente a coluna 'nome'
+          if (nomeReal.isNotEmpty) {
+            prefs.setString('tenant_nome_$tenantId', nomeReal);
+            if (mounted) setState(() => _nomeCondominioCachado = nomeReal);
+          }
+        }
+      }
+    } catch (e) {
+      // Falha silenciosa. Se der erro, usa o Cache ou as Unidades Locais.
+    }
+  }
+
+  Future<void> _verificarCargaInicialAutomatica() async {
+    if (_todasUnidades.isEmpty) {
+      List<ConnectivityResult> conectividade = await Connectivity().checkConnectivity();
+      if (conectividade.isNotEmpty && !conectividade.contains(ConnectivityResult.none)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Sincronizando dados do condomínio..."), backgroundColor: Colors.blue)
+          );
+        }
+        await _baixarCargaDoPredio();
+      }
+    }
   }
 
   Future<void> _fazerLogout() async {
     final listaPendentes = await ApiService().dbHelper.buscarPendentes();
     int pendentes = listaPendentes.length;
-    
+
     if (pendentes > 0) {
       showDialog(
         context: context,
@@ -68,29 +125,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
       await prefs.clear();
       if (mounted) {
         Navigator.pushAndRemoveUntil(
-          context, 
-          MaterialPageRoute(builder: (context) => LoginScreen()), 
+          context,
+          MaterialPageRoute(builder: (context) => LoginScreen()),
           (Route<dynamic> route) => false
         );
       }
     }
   }
 
-  // MÁGICA 1: Carrega instantaneamente do banco local! Zero atrasos no corredor.
   Future<void> _carregarDados({bool checarProximo = false}) async {
     setState(() => isLoading = true);
     try {
       final dados = await ApiService().getUnidadesLocais();
       final blocosUnicos = dados.map((u) => u['bloco_nome'].toString()).toSet().toList();
       blocosUnicos.sort();
-
+      
       if (mounted) {
         setState(() {
           _todasUnidades = dados;
           _blocos = blocosUnicos;
           isLoading = false;
         });
-
+        
         if (checarProximo && _unidadeSelecionada != null) {
           _verificarConclusaoUnidade();
         }
@@ -100,10 +156,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // MÁGICA 2: Função que o zelador chama na portaria para baixar o prédio.
   Future<void> _baixarCargaDoPredio() async {
     setState(() => isLoading = true);
     bool sucesso = await ApiService().baixarCargaDoServidor(widget.user['tenant_id']);
+    
     if (sucesso) {
       if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Prédio atualizado com sucesso! Pronto para modo offline."), backgroundColor: Colors.green));
       await _carregarDados();
@@ -118,9 +174,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       int quantidadeEnviada = await ApiService().sincronizarPendenciasOffline(widget.user['tenant_id']);
       if (quantidadeEnviada > 0 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("🔄 Auto-Sync: $quantidadeEnviada foto(s) enviada(s)!"), backgroundColor: Colors.green)
+          SnackBar(content: Text(" 🔄 Auto-Sync: $quantidadeEnviada foto(s) enviada(s)!"), backgroundColor: Colors.green)
         );
-        _carregarDados(); 
+        _carregarDados();
       }
     } catch (e) {
       // Falha silenciosa
@@ -130,20 +186,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _verificarConclusaoUnidade() {
     final relogiosDoApto = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && 
-      (u['andar'] ?? 'Térreo') == _andarSelecionado &&
+      (u['andar'] ?? 'Térreo') == _andarSelecionado && 
       u['identificacao'].toString() == _unidadeSelecionada
     ).toList();
-
+    
     bool todosLidos = relogiosDoApto.isNotEmpty && relogiosDoApto.every((r) => r['valor_lido'] != null || r['status_cor'] == 'amarelo');
-
+    
     if (todosLidos) {
       final todasAsUnidadesDoAndar = _todasUnidades.where((u) => u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado).toList();
-
       final aptosUnicos = todasAsUnidadesDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
-      aptosUnicos.sort((a, b) => a.compareTo(b)); 
-
+      aptosUnicos.sort((a, b) => a.compareTo(b));
+      
       int indexAtual = aptosUnicos.indexOf(_unidadeSelecionada!);
-
+      
       if (indexAtual >= 0 && indexAtual < aptosUnicos.length - 1) {
         String proximoApto = aptosUnicos[indexAtual + 1];
         _mostrarDialogoProximaUnidade(proximoApto);
@@ -173,8 +228,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              setState(() => _unidadeSelecionada = null); 
-            }, 
+              setState(() => _unidadeSelecionada = null);
+            },
             child: const Text("VOLTAR PARA LISTA", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))
           ),
           ElevatedButton(
@@ -182,7 +237,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             onPressed: () {
               Navigator.pop(ctx);
               Future.delayed(const Duration(milliseconds: 100), () {
-                 if(mounted) setState(() => _unidadeSelecionada = proximoApto); 
+                if(mounted) setState(() => _unidadeSelecionada = proximoApto);
               });
             },
             child: const Text("IR PARA O PRÓXIMO", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -195,13 +250,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _voltarNivel() {
     setState(() {
       if (_unidadeSelecionada != null) {
-        _unidadeSelecionada = null; 
+        _unidadeSelecionada = null;
       } else if (_andarSelecionado != null) {
-        _andarSelecionado = null; 
+        _andarSelecionado = null;
       } else if (_blocoSelecionado != null) {
-        _blocoSelecionado = null; 
+        _blocoSelecionado = null;
       } else if (_condominioSelecionado) {
-        _condominioSelecionado = false; 
+        _condominioSelecionado = false;
       }
     });
   }
@@ -218,11 +273,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return limpo.toUpperCase();
   }
 
+  // ==============================================================
+  // CARD DE CONDOMÍNIO CORRIGIDO (REMOVE O USO DO TENANT_ID NO TEXTO)
+  // ==============================================================
   Widget _buildListaCondominios() {
-    String nomeCondominio = widget.user['tenant_nome'] ?? "CONDOMÍNIO VINCULADO";
-    if (_todasUnidades.isNotEmpty && _todasUnidades.first['condominio_nome'] != null) {
+    String nomeCondominio = "CARREGANDO DADOS..."; // Texto inicial amigável
+
+    if (_nomeCondominioCachado.isNotEmpty) {
+      nomeCondominio = _nomeCondominioCachado.toUpperCase();
+    } else if (_todasUnidades.isNotEmpty && _todasUnidades.first['condominio_nome'] != null) {
       nomeCondominio = _todasUnidades.first['condominio_nome'].toString().toUpperCase();
+    } else if (widget.user['tenant_nome'] != null && widget.user['tenant_nome'].toString().trim().isNotEmpty) {
+      nomeCondominio = widget.user['tenant_nome'].toString().toUpperCase();
     }
+
     return ListView(
       padding: const EdgeInsets.all(10),
       children: [
@@ -247,6 +311,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       itemBuilder: (ctx, i) {
         String nomeBloco = _blocos[i];
         if (!nomeBloco.toLowerCase().contains("bloco")) nomeBloco = "Bloco $nomeBloco";
+        
         return Card(
           color: Colors.white, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           child: ListTile(
@@ -263,14 +328,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildListaAndares() {
     final unidadesDoBloco = _todasUnidades.where((u) => u['bloco_nome'] == _blocoSelecionado).toList();
     final andaresUnicos = unidadesDoBloco.map((u) => u['andar']?.toString() ?? 'Térreo').toSet().toList();
-    
+
     andaresUnicos.sort((a, b) {
       int extrairNumero(String andar) {
         String limpo = andar.toLowerCase();
-        if (limpo.contains('térreo') || limpo.contains('terreo')) return 0; 
+        if (limpo.contains('térreo') || limpo.contains('terreo')) return 0;
         final regex = RegExp(r'\d+');
         final match = regex.firstMatch(andar);
-        return match != null ? int.parse(match.group(0)!) : 999; 
+        return match != null ? int.parse(match.group(0)!) : 999;
       }
       return extrairNumero(a).compareTo(extrairNumero(b));
     });
@@ -281,7 +346,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final andar = andaresUnicos[i];
         final qtd = unidadesDoBloco.where((u) => (u['andar'] ?? 'Térreo') == andar).length;
         final andarExibicao = _formatarAndar(andar);
-
+        
         return Card(
           color: Colors.white, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           child: ListTile(
@@ -300,7 +365,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final relogiosDoAndar = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado
     ).toList();
-
+    
     final aptosUnicos = relogiosDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
     aptosUnicos.sort((a, b) => a.compareTo(b));
 
@@ -309,9 +374,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       itemBuilder: (ctx, i) {
         final apto = aptosUnicos[i];
         final relogiosDesteApto = relogiosDoAndar.where((r) => r['identificacao'].toString() == apto).toList();
+        
         final qtdLidos = relogiosDesteApto.where((r) => r['valor_lido'] != null || r['status_cor'] == 'amarelo').length;
         final total = relogiosDesteApto.length;
-
+        
         Color corStatus = Colors.red;
         if (qtdLidos == total) corStatus = Colors.green;
         else if (qtdLidos > 0) corStatus = Colors.amber;
@@ -337,7 +403,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildListaRelogiosDoApto() {
     final relogios = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && 
-      (u['andar'] ?? 'Térreo') == _andarSelecionado &&
+      (u['andar'] ?? 'Térreo') == _andarSelecionado && 
       u['identificacao'].toString() == _unidadeSelecionada
     ).toList();
 
@@ -351,15 +417,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (item['status_cor'] == 'amarelo') corBolinha = Colors.amber;
 
         String tipo = item['tipo_medidor']?.toString().toUpperCase() ?? 'MEDIDOR';
-        
         IconData icone = Icons.speed;
         if (tipo.contains('FRIO') || tipo.contains('FRIA')) icone = Icons.water_drop;
         if (tipo.contains('QUENTE')) icone = Icons.local_fire_department;
         if (tipo.contains('GÁS') || tipo.contains('GAS')) icone = Icons.propane;
 
-        int casasDecimais = item['digitos_vermelhos'] ?? 3; 
-
+        int casasDecimais = item['digitos_vermelhos'] ?? 3;
         String valorExibicao = 'Aguardando foto';
+        
         if (item['valor_lido'] != null) {
           double? valParsed = double.tryParse(item['valor_lido'].toString());
           if (valParsed != null) {
@@ -377,20 +442,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
             subtitle: Text(valorExibicao, style: const TextStyle(color: Colors.grey)),
             trailing: Icon(Icons.camera_alt, color: Colors.blue[900]),
             onTap: () {
+              Map<String, dynamic> unidadeEditavel = Map<String, dynamic>.from(item);
+              unidadeEditavel['tenant_id'] = widget.user['tenant_id'];
+
               Map medidorData = {
                 'id': item['medidor_id'],
                 'tipo_medidor': tipo,
                 'leitura_anterior': item['leitura_anterior'] ?? '0.0',
-                'digitos_vermelhos': casasDecimais 
+                'digitos_vermelhos': casasDecimais
               };
 
-              item['tenant_id'] = widget.user['tenant_id'];
-
               Navigator.push(
-                context, 
-                MaterialPageRoute(builder: (context) => LeituraScreen(unidade: item, medidor: medidorData))
+                context,
+                MaterialPageRoute(builder: (context) => LeituraScreen(unidade: unidadeEditavel, medidor: medidorData))
               ).then((_) {
-                 if(mounted) _carregarDados(checarProximo: true);
+                if(mounted) _carregarDados(checarProximo: true);
               });
             },
           ),
@@ -422,7 +488,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         iconTheme: const IconThemeData(color: Colors.white),
         leading: mostrarBotaoVoltar ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _voltarNivel) : null,
         actions: [
-          // BOTÃO NOVO DE SINCRONIZAR!
           IconButton(
             icon: const Icon(Icons.cloud_download, color: Colors.greenAccent),
             tooltip: "Baixar Carga do Prédio",
@@ -435,15 +500,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           )
         ],
       ),
-      body: isLoading 
+      body: isLoading
         ? Center(child: CircularProgressIndicator(color: Colors.blue[900]))
         : RefreshIndicator(
-            onRefresh: () => _baixarCargaDoPredio(), // Agora o refresh puxa do servidor!
+            onRefresh: () => _baixarCargaDoPredio(),
             color: Colors.blue[900],
             child: _unidadeSelecionada != null
               ? _buildListaRelogiosDoApto()
               : _andarSelecionado != null
-                  ? _buildListaApartamentos()
+                ? _buildListaApartamentos()
                 : _blocoSelecionado != null
                   ? _buildListaAndares()
                   : _condominioSelecionado

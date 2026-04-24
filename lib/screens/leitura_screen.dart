@@ -1,9 +1,11 @@
+// ==========================================>>> leitura_screen.dart
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
+import 'package:connectivity_plus/connectivity_plus.dart'; // Importante para checar offline antes de tudo
 import 'camera_screen.dart';
 import '../services/api_service.dart';
 import '../database_helper.dart'; 
@@ -43,6 +45,13 @@ class _LeituraScreenState extends State<LeituraScreen> {
       img.Image resizedImage = img.copyResize(originalImage, width: 800);
       String base64Image = base64Encode(img.encodeJpg(resizedImage, quality: 80));
       
+      // MÁGICA RÁPIDA OFFLINE: Se não tiver net, pula tudo e salva na fila
+      var conectividade = await Connectivity().checkConnectivity();
+      if (conectividade.contains(ConnectivityResult.none)) {
+        await _guardarOfflineSilencioso(base64Image, path);
+        return;
+      }
+
       Map envio = {
         'image': base64Image,
         'medidor_id': widget.medidor['id'],
@@ -54,30 +63,47 @@ class _LeituraScreenState extends State<LeituraScreen> {
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(envio),
-        ).timeout(const Duration(seconds: 8)); // REDUZIDO: Desiste rápido se não tiver sinal!
+        ).timeout(const Duration(seconds: 8)); 
 
         if (response.statusCode == 200) {
           var data = jsonDecode(response.body);
           double valorIA = double.tryParse(data['leitura'].toString()) ?? 0.0;
           if (mounted) _mostrarDialogoConfirmacao(valorIA, base64Image, path);
         } else {
-          _mostrarErro("Erro na IA. Digite manualmente.");
-          _mostrarDialogoConfirmacao(0.0, base64Image, path); // Falha na IA: abre a tela manual
+          // A API respondeu com erro (ex: IA fora do ar). Salva na fila para a nuvem tentar depois.
+          await _guardarOfflineSilencioso(base64Image, path);
         }
-      } on SocketException catch (e) {
-        // Cai aqui se estiver 100% sem internet
-        _mostrarDialogoConfirmacao(0.0, base64Image, path);
+      } on SocketException catch (_) {
+        // Net caiu no meio. Salva na fila!
+        await _guardarOfflineSilencioso(base64Image, path);
       } on TimeoutException catch (_) {
-        // Cai aqui no corredor ruim (desiste em 8 segs ao invés de 40)
-        _mostrarErro("Sinal fraco da internet. Por favor, digite manualmente.");
-        _mostrarDialogoConfirmacao(0.0, base64Image, path);
+        // Corredor com 1 pontinho de 4G que não funciona. Salva na fila!
+        await _guardarOfflineSilencioso(base64Image, path);
       } catch (e) {
-        _mostrarDialogoConfirmacao(0.0, base64Image, path);
+        await _guardarOfflineSilencioso(base64Image, path);
       }
     } catch (e) {
       _mostrarErro("Erro interno ao processar a foto.");
-    } finally {
       if (mounted) setState(() => _isProcessing = false);
+    } 
+  }
+
+  // Novo método para fechar a tela sem encher o saco do zelador
+  Future<void> _guardarOfflineSilencioso(String base64Image, String path) async {
+    await DatabaseHelper().salvarLeituraOffline(
+      unidadeId: widget.unidade['unidade_id'] ?? 0, 
+      medidorId: widget.medidor['id'], 
+      valor: 0.0, // Envia ZERO para o backend saber que a IA precisa agir
+      fotoPath: path,
+      leituraAnterior: widget.medidor['leitura_anterior'].toString(),
+      tenantId: widget.unidade['tenant_id']
+    );
+    if (mounted) {
+      setState(() => _isProcessing = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Offline: Foto salva na fila de envio!"), backgroundColor: Colors.orange, duration: Duration(seconds: 2))
+      );
+      Navigator.pop(context, true); // Volta direto para a lista de medidores
     }
   }
 
@@ -98,7 +124,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(valorIA > 0 ? "Você pode digitar para corrigir:" : "Sem internet/IA. Digite a leitura:"),
+                  Text(valorIA > 0 ? "Você pode digitar para corrigir:" : "Digite a leitura:"),
                   const SizedBox(height: 15),
                   TextField(
                     controller: controller,
@@ -166,7 +192,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
         Uri.parse('$_baseUrl/api/leitura/salvar'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(envio),
-      ).timeout(const Duration(seconds: 4)); // REDUZIDO: Desiste de enviar na hora se a net tiver ruim!
+      ).timeout(const Duration(seconds: 4)); 
 
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Leitura salva na nuvem!"), backgroundColor: Colors.green));
@@ -176,7 +202,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
         return true;
       }
     } catch (e) {
-      // Caiu a net ou deu timeout: Guarda offline imediatamente sem travar!
       await _guardarOffline(base64Image, path, valorFinal); 
       return true;
     }
@@ -216,7 +241,14 @@ class _LeituraScreenState extends State<LeituraScreen> {
     String leituraAnteriorFormatada = widget.medidor['leitura_anterior'].toString().replaceAll('.', ',');
     return Scaffold(
       backgroundColor: Colors.blue[50],
-      appBar: AppBar(title: Text("Unidade ${widget.unidade['identificacao']}", style: const TextStyle(color: Colors.white)), backgroundColor: Colors.blue[900], iconTheme: const IconThemeData(color: Colors.white)),
+      appBar: AppBar(
+        title: Text(
+          "Apto ${widget.unidade['identificacao']} - ${(widget.unidade['bloco_nome'] ?? '').toString().toLowerCase().contains('bloco') ? widget.unidade['bloco_nome'] : 'Bloco ${widget.unidade['bloco_nome']}'}",
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        backgroundColor: Colors.blue[900],
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
       body: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -231,7 +263,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
           ),
           const SizedBox(height: 50),
           if (_isProcessing)
-            Column(children: [CircularProgressIndicator(color: Colors.blue[900]), const SizedBox(height: 20), const Text("TENTANDO LER COM A I.A...", style: TextStyle(fontWeight: FontWeight.bold))])
+            Column(children: [CircularProgressIndicator(color: Colors.blue[900]), const SizedBox(height: 20), const Text("PROCESSANDO...", style: TextStyle(fontWeight: FontWeight.bold))])
           else
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40),

@@ -1,137 +1,130 @@
 // ==========================================>>> database_helper.dart
+
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
-  static Database? _database;
-
   factory DatabaseHelper() => _instance;
   DatabaseHelper._internal();
 
+  static Database? _database;
+
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDatabase();
+    _database = await _initDB();
     return _database!;
   }
 
-  Future<Database> _initDatabase() async {
-    String path = join(await getDatabasesPath(), 'condologic_offline.db');
+  Future<Database> _initDB() async {
+    String path = join(await getDatabasesPath(), 'condologic_prod_v3.db'); 
     return await openDatabase(
       path,
-      version: 2, // Incrementei a versão para forçar a criação das novas tabelas
+      version: 1, 
       onCreate: (db, version) async {
-        // Tabela de Leituras (Para envio posterior)
         await db.execute('''
-          CREATE TABLE leituras (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tenant_id INTEGER,
-            medidor_id INTEGER,
-            valor_lido TEXT,
-            data_leitura TEXT,
-            foto_caminho TEXT,
-            status TEXT
-          )
-        ''');
-
-        // NOVAS TABELAS PARA NAVEGAÇÃO OFFLINE
-        await db.execute('''
-          CREATE TABLE blocos_offline (
-            id INTEGER PRIMARY KEY,
-            nome TEXT
-          )
-        ''');
-
-        await db.execute('''
-          CREATE TABLE unidades_offline (
-            id INTEGER PRIMARY KEY,
-            bloco_id INTEGER,
-            identificacao TEXT,
-            andar TEXT
-          )
-        ''');
-
-        await db.execute('''
-          CREATE TABLE medidores_offline (
-            id INTEGER PRIMARY KEY,
+          CREATE TABLE unidades (
+            medidor_id INTEGER PRIMARY KEY,
             unidade_id INTEGER,
-            tipo TEXT,
-            leitura_anterior TEXT
+            identificacao TEXT,
+            bloco_nome TEXT,
+            andar TEXT,  
+            status_cor TEXT,
+            leitura_anterior REAL,
+            media_consumo REAL,
+            valor_lido REAL,
+            tipo_medidor TEXT
           )
         ''');
-      },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          await db.execute('CREATE TABLE IF NOT EXISTS blocos_offline (id INTEGER PRIMARY KEY, nome TEXT)');
-          await db.execute('CREATE TABLE IF NOT EXISTS unidades_offline (id INTEGER PRIMARY KEY, bloco_id INTEGER, identificacao TEXT, andar TEXT)');
-          await db.execute('CREATE TABLE IF NOT EXISTS medidores_offline (id INTEGER PRIMARY KEY, unidade_id INTEGER, tipo TEXT, leitura_anterior TEXT)');
-        }
+
+        await db.execute('''
+          CREATE TABLE leituras_offline (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            unidade_id INTEGER,
+            medidor_id INTEGER,
+            valor_lido REAL,
+            caminho_foto TEXT,
+            data_leitura TEXT,
+            enviado INTEGER DEFAULT 0,
+            leitura_anterior TEXT,
+            tenant_id INTEGER
+          )
+        ''');
       },
     );
   }
 
-  // Métodos para Salvar Estrutura
-  Future<void> limparEstrutura() async {
+  Future<void> salvarUnidadesCache(List<dynamic> unidades) async {
     final db = await database;
-    await db.delete('blocos_offline');
-    await db.delete('unidades_offline');
-    await db.delete('medidores_offline');
+    await db.delete('unidades'); 
+    
+    Batch batch = db.batch();
+    for (var u in unidades) {
+      double leituraAnt = double.tryParse(u['leitura_anterior']?.toString() ?? '0.0') ?? 0.0;
+      double mediaCons = double.tryParse(u['media_consumo']?.toString() ?? '0.0') ?? 0.0;
+      double? valorLido;
+      
+      if (u['valor_lido'] != null) {
+        valorLido = double.tryParse(u['valor_lido'].toString());
+      }
+
+      batch.insert('unidades', {
+        'medidor_id': u['medidor_id'],
+        'unidade_id': u['unidade_id'],
+        'identificacao': u['identificacao'],
+        'bloco_nome': u['bloco_nome'],
+        'andar': u['andar'] ?? 'Térreo', 
+        'status_cor': u['status_cor'],
+        'leitura_anterior': leituraAnt,
+        'media_consumo': mediaCons,
+        'valor_lido': valorLido,
+        'tipo_medidor': u['tipo_medidor'] ?? 'Medidor'
+      });
+    }
+    await batch.commit(noResult: true);
   }
 
-  Future<void> inserirBloco(Map<String, dynamic> bloco) async {
+  Future<List<Map<String, dynamic>>> getUnidadesCache() async {
     final db = await database;
-    await db.insert('blocos_offline', {'id': bloco['id'], 'nome': bloco['nome']}, conflictAlgorithm: ConflictAlgorithm.replace);
+    return await db.query('unidades', orderBy: 'identificacao ASC');
   }
 
-  Future<void> inserirUnidade(Map<String, dynamic> unidade) async {
+  Future<int> salvarLeituraOffline({
+    required int unidadeId, 
+    required int medidorId, 
+    required double valor, 
+    required String fotoPath,
+    required String leituraAnterior,
+    required int tenantId
+  }) async {
     final db = await database;
-    await db.insert('unidades_offline', {
-      'id': unidade['id'],
-      'bloco_id': unidade['bloco_id'],
-      'identificacao': unidade['identificacao'],
-      'andar': unidade['andar']
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    int id = await db.insert('leituras_offline', {
+      'unidade_id': unidadeId,
+      'medidor_id': medidorId,
+      'valor_lido': valor,
+      'caminho_foto': fotoPath,
+      'data_leitura': DateTime.now().toIso8601String(),
+      'enviado': 0,
+      'leitura_anterior': leituraAnterior,
+      'tenant_id': tenantId
+    });
+    
+    await db.update(
+      'unidades', 
+      {'status_cor': 'amarelo', 'valor_lido': valor}, 
+      where: 'medidor_id = ?', 
+      whereArgs: [medidorId]
+    );
+    return id;
   }
 
-  Future<void> inserirMedidor(Map<String, dynamic> medidor) async {
+  Future<List<Map<String, dynamic>>> buscarPendentes() async {
     final db = await database;
-    await db.insert('medidores_offline', {
-      'id': medidor['id'],
-      'unidade_id': medidor['unidade_id'],
-      'tipo': medidor['tipo'],
-      'leitura_anterior': medidor['leitura_anterior'].toString()
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
-  }
-
-  // Métodos para Ler Estrutura (Offline)
-  Future<List<Map<String, dynamic>>> getBlocosOffline() async {
-    final db = await database;
-    return await db.query('blocos_offline');
-  }
-
-  Future<List<Map<String, dynamic>>> getUnidadesOffline(int blocoId) async {
-    final db = await database;
-    return await db.query('unidades_offline', where: 'bloco_id = ?', whereArgs: [blocoId]);
-  }
-
-  Future<List<Map<String, dynamic>>> getMedidoresOffline(int unidadeId) async {
-    final db = await database;
-    return await db.query('medidores_offline', where: 'unidade_id = ?', whereArgs: [unidadeId]);
-  }
-
-  // Salvar Leitura Capturada
-  Future<int> salvarLeitura(Map<String, dynamic> leitura) async {
-    final db = await database;
-    return await db.insert('leituras', leitura);
-  }
-
-  Future<List<Map<String, dynamic>>> getLeiturasPendentes() async {
-    final db = await database;
-    return await db.query('leituras', where: 'status = ?', whereArgs: ['pendente']);
+    return await db.query('leituras_offline', where: 'enviado = 0');
   }
 
   Future<void> marcarComoEnviado(int id) async {
     final db = await database;
-    await db.update('leituras', {'status': 'enviado'}, where: 'id = ?', whereArgs: [id]);
+    await db.update('leituras_offline', {'enviado': 1}, where: 'id = ?', whereArgs: [id]);
   }
 }
