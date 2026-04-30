@@ -1,11 +1,29 @@
+// ==========================================>>> api_service.dart (MOBILE)
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import '../database_helper.dart';
 
 class ApiService {
   final String baseUrl = "https://condologic-backend.onrender.com";
   final DatabaseHelper dbHelper = DatabaseHelper();
+
+  // >>> NOVA FUNÇÃO: Busca os condomínios aos quais o usuário está vinculado
+  Future<List<dynamic>> getCondominiosUsuario(int usuarioId, String nivel) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/admin/condominios?usuario_id=$usuarioId&nivel=$nivel')
+      ).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
 
   // 1. LEITURA INSTANTÂNEA LOCAL (Sem internet - Não trava mais o app)
   Future<List<dynamic>> getUnidadesLocais() async {
@@ -56,7 +74,7 @@ class ApiService {
             'tenant_id': tenantId,
             'leitura_anterior': p['leitura_anterior'] ?? "0"
           }),
-        ).timeout(const Duration(seconds: 15)); // Diminuído o tempo de espera
+        ).timeout(const Duration(seconds: 15)); 
 
         if (response.statusCode == 200) {
           await dbHelper.marcarComoEnviado(p['id']);

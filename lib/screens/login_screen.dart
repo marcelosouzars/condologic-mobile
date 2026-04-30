@@ -1,5 +1,4 @@
-// meu login_screen.dart:
-
+// ==========================================>>> login_screen.dart (MOBILE)
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -7,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dashboard_screen.dart';
+import 'selecao_condominio_screen.dart';
+import '../services/api_service.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -25,27 +26,45 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _verificarSessaoAtiva() async {
-    // Comentamos o redirecionamento automático para forçar o usuário a apertar "Entrar" e validar a rede.
-    /*
     final prefs = await SharedPreferences.getInstance();
     final userDataString = prefs.getString('user_session');
+    
     if (userDataString != null) {
       final userData = jsonDecode(userDataString);
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => DashboardScreen(user: userData)),
-      );
+      
+      // ==============================================================
+      // MÁGICA DA SESSÃO DIÁRIA: Verifica se o login foi feito HOJE
+      // ==============================================================
+      bool sessaoValida = false;
+      if (userData['login_time'] != null) {
+        DateTime dataLogin = DateTime.parse(userData['login_time']);
+        DateTime hoje = DateTime.now();
+        
+        if (dataLogin.year == hoje.year && dataLogin.month == hoje.month && dataLogin.day == hoje.day) {
+          sessaoValida = true;
+        }
+      }
+
+      if (sessaoValida) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          // Se já tem o tenant_id, vai pro Dashboard. Se não, vai pra Seleção.
+          if (userData['tenant_id'] != null) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => DashboardScreen(user: userData)),
+            );
+          }
+        });
+      } else {
+        // Se passou da meia-noite, a sessão caducou! Apaga a memória.
+        await prefs.remove('user_session');
+      }
     }
-    */
   }
 
-  // =======================================================
-  // NOVO: TESTE DE CONEXÃO RAIO-X
-  // =======================================================
   Future<void> _testarConexao() async {
     setState(() => _isLoading = true);
     try {
-      // Tentamos bater direto no servidor para ver se a internet deixa passar
       final response = await http.get(
         Uri.parse("https://condologic-backend.onrender.com")
       ).timeout(const Duration(seconds: 15));
@@ -81,12 +100,37 @@ class _LoginScreenState extends State<LoginScreen> {
       if (response.statusCode == 200) {
         final userData = jsonDecode(response.body);
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('user_session', jsonEncode(userData));
+        
+        // CARIMBO DE DATA: Registra o momento exato do login
+        userData['login_time'] = DateTime.now().toIso8601String();
+        
+        int userId = userData['id'];
+        String nivel = userData['nivel_acesso'] ?? userData['nivel'] ?? 'usuario';
+        
+        List<dynamic> condominios = await ApiService().getCondominiosUsuario(userId, nivel);
 
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => DashboardScreen(user: userData)),
-        );
+        if (!mounted) return;
+
+        if (condominios.length > 1) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => SelecaoCondominioScreen(user: userData, condominios: condominios)
+            ),
+          );
+        } else {
+          if (condominios.isNotEmpty) {
+            userData['tenant_id'] = condominios[0]['id'];
+            userData['tenant_nome'] = condominios[0]['nome'];
+          }
+          await prefs.setString('user_session', jsonEncode(userData));
+          
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => DashboardScreen(user: userData)),
+          );
+        }
+
       } else {
         _mostrarErroGrave("Usuário ou Senha inválidos (Erro ${response.statusCode})");
       }
@@ -104,12 +148,7 @@ class _LoginScreenState extends State<LoginScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         title: const Icon(Icons.error_outline, color: Colors.red, size: 50),
         content: Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("FECHAR", style: TextStyle(color: Colors.red)),
-          )
-        ],
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("FECHAR", style: TextStyle(color: Colors.red)))]
       ),
     );
   }
@@ -121,12 +160,7 @@ class _LoginScreenState extends State<LoginScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         title: const Icon(Icons.wifi, color: Colors.green, size: 50),
         content: Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("OK", style: TextStyle(color: Colors.green)),
-          )
-        ],
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK", style: TextStyle(color: Colors.green)))]
       ),
     );
   }
@@ -136,18 +170,8 @@ class _LoginScreenState extends State<LoginScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          Positioned.fill(
-            child: Image.asset(
-              'assets/images/background_mobile.png',
-              fit: BoxFit.cover,
-            ),
-          ),
-          Positioned.fill(
-            child: ColorFiltered(
-              colorFilter: const ColorFilter.mode(Color(0xa0000000), BlendMode.srcOver), 
-              child: const SizedBox(),
-            ),
-          ),
+          Positioned.fill(child: Image.asset('assets/images/background_mobile.png', fit: BoxFit.cover)),
+          Positioned.fill(child: ColorFiltered(colorFilter: const ColorFilter.mode(Color(0xa0000000), BlendMode.srcOver), child: const SizedBox())),
           SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -156,19 +180,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 50),
                   Icon(Icons.apartment, size: 70, color: Colors.blue[100]), 
                   const SizedBox(height: 10),
-                  Text(
-                    "CONDOLOGIC",
-                    style: TextStyle(
-                      fontSize: 24, 
-                      fontWeight: FontWeight.bold, 
-                      color: Colors.blue[100], 
-                      letterSpacing: 2
-                    ),
-                  ),
-                  const Text(
-                    "SISTEMA DE FOTOMETRIA", 
-                    style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)
-                  ),
+                  Text("CONDOLOGIC", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.blue[100], letterSpacing: 2)),
+                  const Text("SISTEMA DE FOTOMETRIA", style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 150), 
                   Card(
                     elevation: 8,
@@ -178,62 +191,36 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            "Acesse sua Conta",
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blue[900]),
-                          ),
+                          Text("Acesse sua Conta", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blue[900])),
                           const SizedBox(height: 20),
                           TextField(
                             controller: _cpfController,
                             keyboardType: TextInputType.number,
-                            decoration: InputDecoration(
-                              labelText: "CPF (Apenas números)",
-                              prefixIcon: Icon(Icons.person, color: Colors.blue[900], size: 20),
-                              filled: true,
-                              fillColor: Colors.grey[100],
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                            ),
+                            decoration: InputDecoration(labelText: "CPF (Apenas números)", prefixIcon: Icon(Icons.person, color: Colors.blue[900], size: 20), filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)),
                           ),
                           const SizedBox(height: 12),
                           TextField(
                             controller: _passController,
                             obscureText: true,
-                            decoration: InputDecoration(
-                              labelText: "SENHA",
-                              prefixIcon: Icon(Icons.lock, color: Colors.blue[900], size: 20),
-                              filled: true,
-                              fillColor: Colors.grey[100],
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                            ),
+                            decoration: InputDecoration(labelText: "SENHA", prefixIcon: Icon(Icons.lock, color: Colors.blue[900], size: 20), filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)),
                           ),
                           const SizedBox(height: 25),
                           SizedBox(
-                            width: double.infinity,
-                            height: 45,
+                            width: double.infinity, height: 45,
                             child: ElevatedButton(
                               onPressed: _isLoading ? null : _fazerLogin,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue[900],
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
-                              child: _isLoading 
-                                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                                : const Text("ENTRAR", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                              child: _isLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Text("ENTRAR", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                             ),
                           ),
                           const SizedBox(height: 15),
-                          // BOTÃO DE DIAGNÓSTICO DE REDE
                           SizedBox(
-                            width: double.infinity,
-                            height: 45,
+                            width: double.infinity, height: 45,
                             child: OutlinedButton.icon(
                               onPressed: _isLoading ? null : _testarConexao,
                               icon: const Icon(Icons.wifi_find, color: Colors.green),
                               label: const Text("TESTAR REDE/SERVIDOR", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(color: Colors.green, width: 2),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
+                              style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.green, width: 2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                             ),
                           ),
                         ],
