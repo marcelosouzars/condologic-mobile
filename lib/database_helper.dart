@@ -1,5 +1,4 @@
 // ==========================================>>> database_helper.dart
-
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -20,7 +19,7 @@ class DatabaseHelper {
     String path = join(await getDatabasesPath(), 'condologic_prod_v3.db'); 
     return await openDatabase(
       path,
-      version: 1, 
+      version: 2, // VERSÃO 2 PARA ACEITAR OS NOVOS CAMPOS
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE unidades (
@@ -47,9 +46,20 @@ class DatabaseHelper {
             data_leitura TEXT,
             enviado INTEGER DEFAULT 0,
             leitura_anterior TEXT,
-            tenant_id INTEGER
+            tenant_id INTEGER,
+            origem_dado TEXT,
+            valor_ia REAL,
+            troca_relogio INTEGER
           )
         ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          // Migração segura para quem já tem o app instalado
+          await db.execute('ALTER TABLE leituras_offline ADD COLUMN origem_dado TEXT DEFAULT "MANUAL_OFFLINE"');
+          await db.execute('ALTER TABLE leituras_offline ADD COLUMN valor_ia REAL DEFAULT 0.0');
+          await db.execute('ALTER TABLE leituras_offline ADD COLUMN troca_relogio INTEGER DEFAULT 0');
+        }
       },
     );
   }
@@ -95,7 +105,10 @@ class DatabaseHelper {
     required double valor, 
     required String fotoPath,
     required String leituraAnterior,
-    required int tenantId
+    required int tenantId,
+    required String origemDado,
+    required double valorIa,
+    required bool trocaRelogio,
   }) async {
     final db = await database;
     int id = await db.insert('leituras_offline', {
@@ -106,7 +119,10 @@ class DatabaseHelper {
       'data_leitura': DateTime.now().toIso8601String(),
       'enviado': 0,
       'leitura_anterior': leituraAnterior,
-      'tenant_id': tenantId
+      'tenant_id': tenantId,
+      'origem_dado': origemDado,
+      'valor_ia': valorIa,
+      'troca_relogio': trocaRelogio ? 1 : 0
     });
     
     await db.update(

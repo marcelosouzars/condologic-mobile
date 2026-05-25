@@ -35,13 +35,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _buscarNomeCondominioPorTenant(); 
+    _buscarNomeCondominioPorTenant();
     _carregarDados().then((_) {
       _verificarCargaInicialAutomatica();
     });
 
     _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) => _sincronizarAutomaticamente());
-    
     _subscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
       if (results.isNotEmpty && !results.contains(ConnectivityResult.none)) {
         _sincronizarAutomaticamente();
@@ -56,39 +55,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // ==============================================================
-  // BUSCA O NOME REAL NA TABELA 'tenants' E SALVA NO CELULAR
-  // ==============================================================
   Future<void> _buscarNomeCondominioPorTenant() async {
     int tenantId = widget.user['tenant_id'] ?? 1;
     SharedPreferences prefs = await SharedPreferences.getInstance();
     
-    // 1. Tenta carregar do cache primeiro
     String? cache = prefs.getString('tenant_nome_$tenantId');
     if (cache != null && cache.isNotEmpty) {
       if (mounted) setState(() => _nomeCondominioCachado = cache);
     }
 
-    // 2. Busca na API silenciosamente
     try {
       var conectividade = await Connectivity().checkConnectivity();
       if (!conectividade.contains(ConnectivityResult.none)) {
         final baseUrl = "https://condologic-backend.onrender.com";
-        // Bate na rota para pegar a coluna "nome" da tabela "tenants"
         final response = await http.get(Uri.parse('$baseUrl/api/admin/tenant/$tenantId')).timeout(const Duration(seconds: 5));
-        
         if (response.statusCode == 200) {
           var data = jsonDecode(response.body);
-          String nomeReal = data['nome'] ?? ''; // Pega exatamente a coluna 'nome'
+          String nomeReal = data['nome'] ?? ''; 
           if (nomeReal.isNotEmpty) {
             prefs.setString('tenant_nome_$tenantId', nomeReal);
             if (mounted) setState(() => _nomeCondominioCachado = nomeReal);
           }
         }
       }
-    } catch (e) {
-      // Falha silenciosa. Se der erro, usa o Cache ou as Unidades Locais.
-    }
+    } catch (e) {}
   }
 
   Future<void> _verificarCargaInicialAutomatica() async {
@@ -139,14 +129,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final dados = await ApiService().getUnidadesLocais();
       final blocosUnicos = dados.map((u) => u['bloco_nome'].toString()).toSet().toList();
       blocosUnicos.sort();
-      
+
       if (mounted) {
         setState(() {
           _todasUnidades = dados;
           _blocos = blocosUnicos;
           isLoading = false;
         });
-        
+
         if (checarProximo && _unidadeSelecionada != null) {
           _verificarConclusaoUnidade();
         }
@@ -178,9 +168,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
         _carregarDados();
       }
-    } catch (e) {
-      // Falha silenciosa
-    }
+    } catch (e) {}
   }
 
   void _verificarConclusaoUnidade() {
@@ -189,16 +177,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       (u['andar'] ?? 'Térreo') == _andarSelecionado && 
       u['identificacao'].toString() == _unidadeSelecionada
     ).toList();
-    
+
     bool todosLidos = relogiosDoApto.isNotEmpty && relogiosDoApto.every((r) => r['valor_lido'] != null || r['status_cor'] == 'amarelo');
-    
+
     if (todosLidos) {
       final todasAsUnidadesDoAndar = _todasUnidades.where((u) => u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado).toList();
       final aptosUnicos = todasAsUnidadesDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
       aptosUnicos.sort((a, b) => a.compareTo(b));
       
       int indexAtual = aptosUnicos.indexOf(_unidadeSelecionada!);
-      
+
       if (indexAtual >= 0 && indexAtual < aptosUnicos.length - 1) {
         String proximoApto = aptosUnicos[indexAtual + 1];
         _mostrarDialogoProximaUnidade(proximoApto);
@@ -228,9 +216,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              setState(() => _unidadeSelecionada = null);
+              setState(() {
+                _unidadeSelecionada = null;
+                _andarSelecionado = null;
+                _blocoSelecionado = null;
+              });
             },
-            child: const Text("VOLTAR PARA LISTA", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))
+            child: const Text("VOLTAR AO INÍCIO", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900], padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
@@ -273,12 +265,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return limpo.toUpperCase();
   }
 
-  // ==============================================================
-  // CARD DE CONDOMÍNIO CORRIGIDO (REMOVE O USO DO TENANT_ID NO TEXTO)
-  // ==============================================================
   Widget _buildListaCondominios() {
-    String nomeCondominio = "CARREGANDO DADOS..."; // Texto inicial amigável
-
+    String nomeCondominio = "CARREGANDO DADOS...";
     if (_nomeCondominioCachado.isNotEmpty) {
       nomeCondominio = _nomeCondominioCachado.toUpperCase();
     } else if (_todasUnidades.isNotEmpty && _todasUnidades.first['condominio_nome'] != null) {
@@ -355,7 +343,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             subtitle: Text("$qtd medidores neste piso", style: const TextStyle(color: Colors.grey)),
             trailing: const Icon(Icons.chevron_right, color: Colors.grey),
             onTap: () => setState(() => _andarSelecionado = andar),
-          ),
+           ),
         );
       },
     );
@@ -365,7 +353,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final relogiosDoAndar = _todasUnidades.where((u) => 
       u['bloco_nome'] == _blocoSelecionado && (u['andar'] ?? 'Térreo') == _andarSelecionado
     ).toList();
-    
     final aptosUnicos = relogiosDoAndar.map((u) => u['identificacao'].toString()).toSet().toList();
     aptosUnicos.sort((a, b) => a.compareTo(b));
 
@@ -417,6 +404,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (item['status_cor'] == 'amarelo') corBolinha = Colors.amber;
 
         String tipo = item['tipo_medidor']?.toString().toUpperCase() ?? 'MEDIDOR';
+        
         IconData icone = Icons.speed;
         if (tipo.contains('FRIO') || tipo.contains('FRIA')) icone = Icons.water_drop;
         if (tipo.contains('QUENTE')) icone = Icons.local_fire_department;

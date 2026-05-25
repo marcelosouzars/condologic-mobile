@@ -28,10 +28,8 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _verificarSessaoAtiva() async {
     final prefs = await SharedPreferences.getInstance();
     final userDataString = prefs.getString('user_session');
-    
     if (userDataString != null) {
       final userData = jsonDecode(userDataString);
-      
       // ==============================================================
       // MÁGICA DA SESSÃO DIÁRIA: Verifica se o login foi feito HOJE
       // ==============================================================
@@ -39,7 +37,6 @@ class _LoginScreenState extends State<LoginScreen> {
       if (userData['login_time'] != null) {
         DateTime dataLogin = DateTime.parse(userData['login_time']);
         DateTime hoje = DateTime.now();
-        
         if (dataLogin.year == hoje.year && dataLogin.month == hoje.month && dataLogin.day == hoje.day) {
           sessaoValida = true;
         }
@@ -72,7 +69,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } on SocketException catch (e) {
       _mostrarErroGrave("FALHA CRÍTICA DE INTERNET (SocketException):\n${e.message}\nVerifique se o app tem permissão de dados.");
     } on TimeoutException catch (_) {
-      _mostrarErroGrave("SINAL LENTO (Timeout):\nA internet está ativa, mas demorou mais de 15 segundos para alcançar o servidor.");
+      _mostrarErroGrave("SINAL LENTO (Timeout):\nA internet está activa, mas demorou mais de 15 segundos para alcançar o servidor.");
     } catch (e) {
       _mostrarErroGrave("ERRO DESCONHECIDO:\n$e");
     } finally {
@@ -96,19 +93,16 @@ class _LoginScreenState extends State<LoginScreen> {
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"cpf": cpf, "senha": senha}),
       ).timeout(const Duration(seconds: 40));
-      
       if (response.statusCode == 200) {
         final userData = jsonDecode(response.body);
         final prefs = await SharedPreferences.getInstance();
         
         // CARIMBO DE DATA: Registra o momento exato do login
         userData['login_time'] = DateTime.now().toIso8601String();
-        
         int userId = userData['id'];
         String nivel = userData['nivel_acesso'] ?? userData['nivel'] ?? 'usuario';
         
         List<dynamic> condominios = await ApiService().getCondominiosUsuario(userId, nivel);
-
         if (!mounted) return;
 
         if (condominios.length > 1) {
@@ -124,7 +118,6 @@ class _LoginScreenState extends State<LoginScreen> {
             userData['tenant_nome'] = condominios[0]['nome'];
           }
           await prefs.setString('user_session', jsonEncode(userData));
-          
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(builder: (context) => DashboardScreen(user: userData)),

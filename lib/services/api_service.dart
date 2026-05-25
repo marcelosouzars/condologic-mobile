@@ -9,7 +9,6 @@ class ApiService {
   final String baseUrl = "https://condologic-backend.onrender.com";
   final DatabaseHelper dbHelper = DatabaseHelper();
 
-  // >>> NOVA FUNÇÃO: Busca os condomínios aos quais o usuário está vinculado
   Future<List<dynamic>> getCondominiosUsuario(int usuarioId, String nivel) async {
     try {
       final response = await http.get(
@@ -25,12 +24,10 @@ class ApiService {
     }
   }
 
-  // 1. LEITURA INSTANTÂNEA LOCAL (Sem internet - Não trava mais o app)
   Future<List<dynamic>> getUnidadesLocais() async {
     return await dbHelper.getUnidadesCache();
   }
 
-  // 2. DOWNLOAD DA CARGA DO SERVIDOR (Chamado no botão de Sincronizar)
   Future<bool> baixarCargaDoServidor(int tenantId) async {
     try {
       final response = await http.get(
@@ -65,14 +62,19 @@ class ApiService {
         final bytes = await foto.readAsBytes();
         String base64Image = base64Encode(bytes);
 
+        // MUDANÇA AQUI: Enviando direto para o salvar com o contexto offline
         final response = await http.post(
-          Uri.parse('$baseUrl/api/leitura/processar-ia'),
+          Uri.parse('$baseUrl/api/leitura/salvar'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'image': base64Image,
             'medidor_id': p['medidor_id'],
             'tenant_id': tenantId,
-            'leitura_anterior': p['leitura_anterior'] ?? "0"
+            'leitura_anterior': p['leitura_anterior'] ?? "0",
+            'valor_lido': p['valor_lido'],
+            'origem_dado': p['origem_dado'] ?? 'MANUAL_OFFLINE',
+            'valor_ia': p['valor_ia'] ?? 0.0,
+            'troca_relogio': p['troca_relogio'] == 1
           }),
         ).timeout(const Duration(seconds: 15)); 
 

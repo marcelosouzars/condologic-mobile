@@ -5,10 +5,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
-import 'package:connectivity_plus/connectivity_plus.dart'; // Importante para checar offline antes de tudo
+import 'package:connectivity_plus/connectivity_plus.dart'; 
 import 'camera_screen.dart';
 import '../services/api_service.dart';
-import '../database_helper.dart'; 
+import '../database_helper.dart';
 
 class LeituraScreen extends StatefulWidget {
   final Map unidade;
@@ -29,6 +29,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
       context,
       MaterialPageRoute(builder: (context) => const CameraScreen()),
     );
+
     if (path != null) {
       setState(() => _imageFile = File(path));
       _processarIA(path);
@@ -37,6 +38,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
 
   Future<void> _processarIA(String path) async {
     setState(() => _isProcessing = true);
+
     try {
       final bytes = await File(path).readAsBytes();
       img.Image? originalImage = img.decodeImage(bytes);
@@ -45,10 +47,13 @@ class _LeituraScreenState extends State<LeituraScreen> {
       img.Image resizedImage = img.copyResize(originalImage, width: 800);
       String base64Image = base64Encode(img.encodeJpg(resizedImage, quality: 80));
       
-      // MÁGICA RÁPIDA OFFLINE: Se não tiver net, pula tudo e salva na fila
       var conectividade = await Connectivity().checkConnectivity();
       if (conectividade.contains(ConnectivityResult.none)) {
-        await _guardarOfflineSilencioso(base64Image, path);
+        // MODO OFFLINE DETECTADO IMEDIATAMENTE
+        if (mounted) {
+          setState(() => _isProcessing = false);
+          _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true);
+        }
         return;
       }
 
@@ -63,24 +68,27 @@ class _LeituraScreenState extends State<LeituraScreen> {
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(envio),
-        ).timeout(const Duration(seconds: 8)); 
+        ).timeout(const Duration(seconds: 3));
 
         if (response.statusCode == 200) {
           var data = jsonDecode(response.body);
           double valorIA = double.tryParse(data['leitura'].toString()) ?? 0.0;
-          if (mounted) _mostrarDialogoConfirmacao(valorIA, base64Image, path);
+          if (mounted) {
+            setState(() => _isProcessing = false);
+            _mostrarDialogoConfirmacao(valorIA, base64Image, path, isOffline: false);
+          }
         } else {
-          // A API respondeu com erro (ex: IA fora do ar). Salva na fila para a nuvem tentar depois.
-          await _guardarOfflineSilencioso(base64Image, path);
+          if (mounted) {
+            setState(() => _isProcessing = false);
+            _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true);
+          }
         }
       } on SocketException catch (_) {
-        // Net caiu no meio. Salva na fila!
-        await _guardarOfflineSilencioso(base64Image, path);
+        if (mounted) { setState(() => _isProcessing = false); _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true); }
       } on TimeoutException catch (_) {
-        // Corredor com 1 pontinho de 4G que não funciona. Salva na fila!
-        await _guardarOfflineSilencioso(base64Image, path);
+        if (mounted) { setState(() => _isProcessing = false); _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true); }
       } catch (e) {
-        await _guardarOfflineSilencioso(base64Image, path);
+        if (mounted) { setState(() => _isProcessing = false); _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true); }
       }
     } catch (e) {
       _mostrarErro("Erro interno ao processar a foto.");
@@ -88,63 +96,81 @@ class _LeituraScreenState extends State<LeituraScreen> {
     } 
   }
 
-  // Novo método para fechar a tela sem encher o saco do zelador
-  Future<void> _guardarOfflineSilencioso(String base64Image, String path) async {
-    await DatabaseHelper().salvarLeituraOffline(
-      unidadeId: widget.unidade['unidade_id'] ?? 0, 
-      medidorId: widget.medidor['id'], 
-      valor: 0.0, // Envia ZERO para o backend saber que a IA precisa agir
-      fotoPath: path,
-      leituraAnterior: widget.medidor['leitura_anterior'].toString(),
-      tenantId: widget.unidade['tenant_id']
-    );
-    if (mounted) {
-      setState(() => _isProcessing = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Offline: Foto salva na fila de envio!"), backgroundColor: Colors.orange, duration: Duration(seconds: 2))
-      );
-      Navigator.pop(context, true); // Volta direto para a lista de medidores
-    }
-  }
-
-  void _mostrarDialogoConfirmacao(double valorIA, String base64Image, String path) {
+  void _mostrarDialogoConfirmacao(double valorIA, String base64Image, String path, {required bool isOffline}) {
     int casasDecimais = widget.medidor['digitos_vermelhos'] ?? 3;
-    TextEditingController controller = TextEditingController(text: valorIA > 0 ? valorIA.toStringAsFixed(casasDecimais).replaceAll('.', ',') : "");
+    TextEditingController controller = TextEditingController(text: (valorIA > 0 && !isOffline) ? valorIA.toStringAsFixed(casasDecimais).replaceAll('.', ',') : "");
 
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) {
         bool isSaving = false;
+        bool houveTrocaRelogio = false;
+
         return StatefulBuilder(
           builder: (context, setStateDialog) {
             return AlertDialog(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: const Text("Confirme a Leitura", textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold)),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
+              title: Column(
                 children: [
-                  Text(valorIA > 0 ? "Você pode digitar para corrigir:" : "Digite a leitura:"),
-                  const SizedBox(height: 15),
-                  TextField(
-                    controller: controller,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.blue),
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      suffixText: "m³"
+                  if (isOffline)
+                    Container(
+                      padding: const EdgeInsets.all(5),
+                      color: Colors.red[100],
+                      child: const Text("SEM INTERNET", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
                     ),
-                  ),
-                  const SizedBox(height: 15),
-                  if (isSaving) const CircularProgressIndicator()
-                ],
+                  const SizedBox(height: 5),
+                  Text(isOffline ? "Informe a Leitura Manual" : "Confirme a Leitura da IA", textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
+                ]
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text((!isOffline && valorIA > 0) ? "Valor lido pela IA. Você pode corrigir:" : "Digite o valor que está no relógio:"),
+                    const SizedBox(height: 15),
+                    TextField(
+                      controller: controller,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 24, 
+                        fontWeight: FontWeight.bold, 
+                        color: isOffline ? Colors.black : Colors.green[700]
+                      ),
+                      decoration: InputDecoration(
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        suffixText: "m³",
+                        fillColor: isOffline ? Colors.grey[200] : Colors.green[50],
+                        filled: true
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    
+                    // O NOVO BOTÃO DE TROCA DE RELÓGIO
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text("Houve Troca de Relógio?", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                      subtitle: const Text("Ative se o relógio zerou.", style: TextStyle(fontSize: 12)),
+                      value: houveTrocaRelogio,
+                      activeColor: Colors.blue[900],
+                      onChanged: (bool value) {
+                        setStateDialog(() {
+                          houveTrocaRelogio = value;
+                        });
+                      },
+                    ),
+
+                    const SizedBox(height: 10),
+                    if (isSaving) const CircularProgressIndicator()
+                  ],
+                ),
               ),
               actionsAlignment: MainAxisAlignment.center,
               actions: [
                 TextButton(
                   onPressed: isSaving ? null : () {
-                    Navigator.pop(context); 
+                    Navigator.pop(context);
                     _capturarFoto(); 
                   },
                   child: const Text("REPETIR FOTO", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
@@ -156,10 +182,17 @@ class _LeituraScreenState extends State<LeituraScreen> {
                       return;
                     }
                     setStateDialog(() => isSaving = true);
-                    String valText = controller.text.replaceAll(',', '.');
-                    double valorFinal = double.tryParse(valText) ?? valorIA;
                     
-                    bool sucesso = await _salvarDefinitivo(valorFinal, base64Image, path);
+                    String valText = controller.text.replaceAll(',', '.');
+                    double valorFinal = double.tryParse(valText) ?? 0.0;
+                    
+                    // RASTREIO DA AUDITORIA
+                    String origemDado = 'MANUAL_OFFLINE';
+                    if (!isOffline) {
+                      origemDado = (valorFinal != valorIA) ? 'IA_CORRIGIDA' : 'IA_PURA';
+                    }
+                    
+                    bool sucesso = await _salvarDefinitivo(valorFinal, base64Image, path, origemDado, valorIA, houveTrocaRelogio, isOffline);
                     if (sucesso && mounted) {
                       Navigator.pop(context); 
                       Navigator.pop(context, true); 
@@ -167,8 +200,8 @@ class _LeituraScreenState extends State<LeituraScreen> {
                       setStateDialog(() => isSaving = false);
                     }
                   },
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
-                  child: const Text("SALVAR LEITURA", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900], padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
+                  child: const Text("SALVAR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 )
               ],
             );
@@ -178,13 +211,21 @@ class _LeituraScreenState extends State<LeituraScreen> {
     );
   }
 
-  Future<bool> _salvarDefinitivo(double valorFinal, String base64Image, String path) async {
+  Future<bool> _salvarDefinitivo(double valorFinal, String base64Image, String path, String origemDado, double valorIA, bool trocaRelogio, bool forcarOffline) async {
+    if (forcarOffline) {
+      await _guardarOffline(base64Image, path, valorFinal, origemDado, valorIA, trocaRelogio);
+      return true;
+    }
+
     Map envio = {
       'valor_lido': valorFinal,
       'image': base64Image,
       'medidor_id': widget.medidor['id'],
       'tenant_id': widget.unidade['tenant_id'],
-      'leitura_anterior': widget.medidor['leitura_anterior']
+      'leitura_anterior': widget.medidor['leitura_anterior'],
+      'origem_dado': origemDado,
+      'valor_ia': valorIA,
+      'troca_relogio': trocaRelogio
     };
 
     try {
@@ -192,29 +233,32 @@ class _LeituraScreenState extends State<LeituraScreen> {
         Uri.parse('$_baseUrl/api/leitura/salvar'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(envio),
-      ).timeout(const Duration(seconds: 4)); 
+      ).timeout(const Duration(seconds: 2));
 
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Leitura salva na nuvem!"), backgroundColor: Colors.green));
         return true;
       } else {
-        await _guardarOffline(base64Image, path, valorFinal);
+        await _guardarOffline(base64Image, path, valorFinal, origemDado, valorIA, trocaRelogio);
         return true;
       }
     } catch (e) {
-      await _guardarOffline(base64Image, path, valorFinal); 
+      await _guardarOffline(base64Image, path, valorFinal, origemDado, valorIA, trocaRelogio); 
       return true;
     }
   }
 
-  Future<void> _guardarOffline(String base64, String path, double valorManual) async {
+  Future<void> _guardarOffline(String base64, String path, double valorManual, String origemDado, double valorIA, bool trocaRelogio) async {
      await DatabaseHelper().salvarLeituraOffline(
         unidadeId: widget.unidade['unidade_id'] ?? 0, 
         medidorId: widget.medidor['id'], 
         valor: valorManual, 
         fotoPath: path,
         leituraAnterior: widget.medidor['leitura_anterior'].toString(),
-        tenantId: widget.unidade['tenant_id']
+        tenantId: widget.unidade['tenant_id'],
+        origemDado: origemDado,
+        valorIa: valorIA,
+        trocaRelogio: trocaRelogio
       );
      _mostrarAvisoOffline();
   }
@@ -239,6 +283,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
   @override
   Widget build(BuildContext context) {
     String leituraAnteriorFormatada = widget.medidor['leitura_anterior'].toString().replaceAll('.', ',');
+
     return Scaffold(
       backgroundColor: Colors.blue[50],
       appBar: AppBar(
