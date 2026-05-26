@@ -68,7 +68,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       var conectividade = await Connectivity().checkConnectivity();
       if (!conectividade.contains(ConnectivityResult.none)) {
         final baseUrl = "https://condologic-backend.onrender.com";
-        final response = await http.get(Uri.parse('$baseUrl/api/admin/tenant/$tenantId')).timeout(const Duration(seconds: 5));
+        final response = await http.get(Uri.parse('$baseUrl/api/admin/tenant/$tenantId')).timeout(const Duration(seconds: 10));
         if (response.statusCode == 200) {
           var data = jsonDecode(response.body);
           String nomeReal = data['nome'] ?? ''; 
@@ -104,9 +104,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Row(children: [Icon(Icons.warning, color: Colors.red), SizedBox(width: 10), Text("Atenção!")]),
-          content: Text("Você tem $pendentes foto(s) na fila aguardando internet. Aguarde o envio automático antes de sair para não perder os dados."),
+          content: Text("Você tem $pendentes foto(s) na fila aguardando internet.\n\nSe sair agora, os dados continuarão salvos de forma segura no telefone, mas só serão enviados para a nuvem no seu próximo login. Deseja sair?"),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("ENTENDIDO", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)))
+            TextButton(
+              onPressed: () => Navigator.pop(ctx), 
+              child: const Text("CANCELAR", style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold))
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                SharedPreferences prefs = await SharedPreferences.getInstance();
+                await prefs.clear();
+                if (mounted) {
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => LoginScreen()),
+                    (Route<dynamic> route) => false
+                  );
+                }
+              }, 
+              child: const Text("SAIR MESMO ASSIM", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))
+            )
           ],
         )
       );
@@ -154,7 +172,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Prédio atualizado com sucesso! Pronto para modo offline."), backgroundColor: Colors.green));
       await _carregarDados();
     } else {
-      if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Erro ao baixar dados. Verifique a internet."), backgroundColor: Colors.red));
+      if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Aguardando melhor sinal para atualizar o prédio."), backgroundColor: Colors.orange));
       setState(() => isLoading = false);
     }
   }
@@ -164,11 +182,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
       int quantidadeEnviada = await ApiService().sincronizarPendenciasOffline(widget.user['tenant_id']);
       if (quantidadeEnviada > 0 && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(" 🔄 Auto-Sync: $quantidadeEnviada foto(s) enviada(s)!"), backgroundColor: Colors.green)
+          SnackBar(content: Text("🔄 Auto-Sync: $quantidadeEnviada foto(s) enviada(s)!"), backgroundColor: Colors.green)
         );
         _carregarDados();
       }
     } catch (e) {}
+  }
+
+  // >>> A NOVA LÓGICA DE SINCRONIZAÇÃO MANUAL (SEM ERRO FALSO) <<<
+  Future<void> _sincronizarManual() async {
+    setState(() => isLoading = true);
+    
+    // 1. Checa a fila primeiro
+    final pendentesAntes = await ApiService().dbHelper.buscarPendentes();
+    
+    if (pendentesAntes.isEmpty) {
+      // Se não tem nada para enviar, avisa e aborta
+      setState(() => isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Tudo limpo! Nenhuma foto pendente no telefone."), backgroundColor: Colors.blue)
+        );
+      }
+      return;
+    }
+
+    // 2. Se tem pendência, avisa que começou e tenta enviar
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Sincronizando ${pendentesAntes.length} foto(s)..."), backgroundColor: Colors.orange)
+      );
+    }
+
+    int enviados = await ApiService().sincronizarPendenciasOffline(widget.user['tenant_id']);
+    
+    if (mounted) {
+      setState(() => isLoading = false);
+      if (enviados > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("✅ Sucesso: $enviados foto(s) enviada(s)!"), backgroundColor: Colors.green)
+        );
+        _carregarDados(checarProximo: true);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Sinal instável. O app tentará novamente em breve."), backgroundColor: Colors.red)
+        );
+      }
+    }
   }
 
   void _verificarConclusaoUnidade() {
@@ -476,6 +536,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         iconTheme: const IconThemeData(color: Colors.white),
         leading: mostrarBotaoVoltar ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _voltarNivel) : null,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.sync, color: Colors.white),
+            tooltip: "Sincronizar Manualmente",
+            onPressed: _sincronizarManual,
+          ),
           IconButton(
             icon: const Icon(Icons.cloud_download, color: Colors.greenAccent),
             tooltip: "Baixar Carga do Prédio",

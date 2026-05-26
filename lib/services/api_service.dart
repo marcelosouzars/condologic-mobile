@@ -9,11 +9,14 @@ class ApiService {
   final String baseUrl = "https://condologic-backend.onrender.com";
   final DatabaseHelper dbHelper = DatabaseHelper();
 
+  // TRAVA DE SEGURANÇA: Impede que o botão manual e o auto-sync briguem pela mesma foto
+  static bool _isSyncing = false; 
+
   Future<List<dynamic>> getCondominiosUsuario(int usuarioId, String nivel) async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/api/admin/condominios?usuario_id=$usuarioId&nivel=$nivel')
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 20)); // Aumentado
       
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -32,7 +35,7 @@ class ApiService {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/api/dashboard/unidades?tenant_id=$tenantId')
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 30)); // Aumentado para suportar Cold Start
       
       if (response.statusCode == 200) {
         final List<dynamic> unidades = jsonDecode(response.body);
@@ -45,12 +48,15 @@ class ApiService {
     }
   }
 
-  // 3. ENVIO EM LOTE (Fundo de tela)
   Future<int> sincronizarPendenciasOffline(int tenantId) async {
+    if (_isSyncing) return 0; // Se já estiver sincronizando, aborta a nova tentativa silenciosamente
+    
     final pendencias = await dbHelper.buscarPendentes();
     if (pendencias.isEmpty) return 0; 
 
+    _isSyncing = true; // TRANCANDO A PORTA
     int enviosComSucesso = 0;
+
     for (var p in pendencias) {
       try {
         File foto = File(p['caminho_foto']);
@@ -62,7 +68,7 @@ class ApiService {
         final bytes = await foto.readAsBytes();
         String base64Image = base64Encode(bytes);
 
-        // MUDANÇA AQUI: Enviando direto para o salvar com o contexto offline
+        // TIMEOUT AUMENTADO PARA 30s: Dá tempo do Render acordar e do 4G enviar a foto
         final response = await http.post(
           Uri.parse('$baseUrl/api/leitura/salvar'),
           headers: {'Content-Type': 'application/json'},
@@ -76,16 +82,18 @@ class ApiService {
             'valor_ia': p['valor_ia'] ?? 0.0,
             'troca_relogio': p['troca_relogio'] == 1
           }),
-        ).timeout(const Duration(seconds: 15)); 
+        ).timeout(const Duration(seconds: 30)); 
 
         if (response.statusCode == 200) {
           await dbHelper.marcarComoEnviado(p['id']);
           enviosComSucesso++;
         }
       } catch (e) {
-        print("Aguardando melhor sinal para o ID ${p['id']}");
+        print("Aguardando melhor sinal ou servidor acordar para o ID ${p['id']}");
       }
     }
+    
+    _isSyncing = false; // DESTRANCANDO A PORTA
     return enviosComSucesso;
   }
 }

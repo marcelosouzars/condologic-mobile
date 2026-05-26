@@ -24,6 +24,23 @@ class _LeituraScreenState extends State<LeituraScreen> {
   bool _isProcessing = false;
   final String _baseUrl = "https://condologic-backend.onrender.com";
 
+  Future<bool> _temInternetReal() async {
+    try {
+      var conectividade = await Connectivity().checkConnectivity();
+      if (conectividade.isEmpty || conectividade.every((e) => e == ConnectivityResult.none)) {
+        return false;
+      }
+
+      final response = await http.get(
+        Uri.parse('https://clients3.google.com/generate_204')
+      ).timeout(const Duration(seconds: 5));
+
+      return response.statusCode == 204 || response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _capturarFoto() async {
     final String? path = await Navigator.push(
       context,
@@ -47,11 +64,12 @@ class _LeituraScreenState extends State<LeituraScreen> {
       img.Image resizedImage = img.copyResize(originalImage, width: 800);
       String base64Image = base64Encode(img.encodeJpg(resizedImage, quality: 80));
       
-      var conectividade = await Connectivity().checkConnectivity();
-      if (conectividade.contains(ConnectivityResult.none)) {
-        // MODO OFFLINE DETECTADO IMEDIATAMENTE
+      bool internetOK = await _temInternetReal();
+      
+      if (!internetOK) {
         if (mounted) {
           setState(() => _isProcessing = false);
+          _mostrarErro("DIAGNÓSTICO: O app achou que está sem internet (Ping Falhou).");
           _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true);
         }
         return;
@@ -68,7 +86,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
           Uri.parse('$_baseUrl/api/leitura/processar-ia'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(envio),
-        ).timeout(const Duration(seconds: 3));
+        ).timeout(const Duration(seconds: 30));
 
         if (response.statusCode == 200) {
           var data = jsonDecode(response.body);
@@ -80,18 +98,26 @@ class _LeituraScreenState extends State<LeituraScreen> {
         } else {
           if (mounted) {
             setState(() => _isProcessing = false);
+            // DIAGNÓSTICO ATIVO: Vai mostrar o erro exato do Render/Gemini na tela
+            _mostrarErro("ERRO DO SERVIDOR (${response.statusCode}): ${response.body}");
             _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true);
           }
         }
-      } on SocketException catch (_) {
-        if (mounted) { setState(() => _isProcessing = false); _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true); }
       } on TimeoutException catch (_) {
-        if (mounted) { setState(() => _isProcessing = false); _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true); }
+        if (mounted) { 
+          setState(() => _isProcessing = false); 
+          _mostrarErro("DIAGNÓSTICO: Timeout de 30s. O Render demorou demais.");
+          _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true); 
+        }
       } catch (e) {
-        if (mounted) { setState(() => _isProcessing = false); _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true); }
+        if (mounted) { 
+          setState(() => _isProcessing = false); 
+          _mostrarErro("DIAGNÓSTICO ERRO DE REDE: $e");
+          _mostrarDialogoConfirmacao(0.0, base64Image, path, isOffline: true); 
+        }
       }
     } catch (e) {
-      _mostrarErro("Erro interno ao processar a foto.");
+      _mostrarErro("DIAGNÓSTICO ERRO INTERNO: $e");
       if (mounted) setState(() => _isProcessing = false);
     } 
   }
@@ -117,7 +143,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
                     Container(
                       padding: const EdgeInsets.all(5),
                       color: Colors.red[100],
-                      child: const Text("SEM INTERNET", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
+                      child: const Text("OFFLINE (LENTO/SEM SINAL)", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
                     ),
                   const SizedBox(height: 5),
                   Text(isOffline ? "Informe a Leitura Manual" : "Confirme a Leitura da IA", textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -147,7 +173,6 @@ class _LeituraScreenState extends State<LeituraScreen> {
                     ),
                     const SizedBox(height: 15),
                     
-                    // O NOVO BOTÃO DE TROCA DE RELÓGIO
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text("Houve Troca de Relógio?", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
@@ -186,13 +211,13 @@ class _LeituraScreenState extends State<LeituraScreen> {
                     String valText = controller.text.replaceAll(',', '.');
                     double valorFinal = double.tryParse(valText) ?? 0.0;
                     
-                    // RASTREIO DA AUDITORIA
                     String origemDado = 'MANUAL_OFFLINE';
                     if (!isOffline) {
                       origemDado = (valorFinal != valorIA) ? 'IA_CORRIGIDA' : 'IA_PURA';
                     }
                     
                     bool sucesso = await _salvarDefinitivo(valorFinal, base64Image, path, origemDado, valorIA, houveTrocaRelogio, isOffline);
+                    
                     if (sucesso && mounted) {
                       Navigator.pop(context); 
                       Navigator.pop(context, true); 
@@ -233,7 +258,7 @@ class _LeituraScreenState extends State<LeituraScreen> {
         Uri.parse('$_baseUrl/api/leitura/salvar'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(envio),
-      ).timeout(const Duration(seconds: 2));
+      ).timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Leitura salva na nuvem!"), backgroundColor: Colors.green));
@@ -260,24 +285,20 @@ class _LeituraScreenState extends State<LeituraScreen> {
         valorIa: valorIA,
         trocaRelogio: trocaRelogio
       );
-     _mostrarAvisoOffline();
-  }
-
-  void _mostrarAvisoOffline() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Row(children: [Icon(Icons.wifi_off, color: Colors.orange[800]), const SizedBox(width: 10), const Text("Fila de Envio")]),
-        content: const Text("Salvo no celular! Será enviado automaticamente quando recuperar a internet."),
-        actions: [ElevatedButton(onPressed: () { Navigator.pop(context); }, style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800]), child: const Text("OK", style: TextStyle(color: Colors.white)))]
-      ),
-    );
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Foto salva! Ela será enviada em breve."), 
+            backgroundColor: Colors.orange, 
+            duration: Duration(seconds: 3)
+          )
+        );
+      }
   }
 
   void _mostrarErro(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)), backgroundColor: Colors.red, duration: const Duration(seconds: 4)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)), backgroundColor: Colors.red, duration: const Duration(seconds: 8)));
   }
 
   @override
