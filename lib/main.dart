@@ -1,3 +1,6 @@
+//
+// main.dart (mobile)
+//
 import 'package:flutter/material.dart';
 import 'screens/login_screen.dart'; 
 

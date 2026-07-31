@@ -1,4 +1,6 @@
-// ==========================================>>> leitura_screen.dart
+//
+// ==========================================>>> leitura_screen.dart (mOBILE)
+//
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';

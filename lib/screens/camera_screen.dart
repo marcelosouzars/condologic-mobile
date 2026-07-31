@@ -1,3 +1,6 @@
+//
+// camera_screen.dart ( condologic MOBILE)
+//
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 
